@@ -1,23 +1,53 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import xtermCss from '@xterm/xterm/css/xterm.css';
-import { createElement as h, useEffect, useRef } from 'react';
+import {
+  Fragment,
+  createElement as h,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import {
+  Button,
+  IconChevronDownOutlineRegular,
+  Menu,
+  PluginArtworkTerminal,
+  ShortcutKeys,
+} from '@deepseek-ai/dsh-client-ui-primitives';
 
 const NS = 'fastTerm';
 const PLUGIN_ID = 'dsh-fast-term';
 const STYLE_ID = 'dsh-fast-term-style';
 const WS_PATH = '/api/dsh-fast-term/ws';
 const CLOSE_PATH = '/api/dsh-fast-term/close';
+const RENAME_PATH = '/api/dsh-fast-term/rename';
+const LIST_PATH = '/api/dsh-fast-term/list';
+const SHELLS_PATH = '/api/dsh-fast-term/shells';
+const SHELL_KEY = 'dsh-fast-term:shell';
+
 const CSS = `
-.dft-root{box-sizing:border-box;height:100%;min-height:0;flex:1;display:flex;flex-direction:column;padding:6px 8px 0;background:var(--dsw-alias-bg-layer-1);}
-.dft-host{position:relative;flex:1;min-height:0;}
-.dft-host .xterm{height:100%;}
-.dft-host .xterm-viewport{overflow-y:auto;}
-.dft-guide{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsl-guide-entry-radius);background:var(--dsw-alias-bg-layer-1);width:100%;}
-.dft-guide-btn{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:3px;width:100%;padding:14px 20px;cursor:pointer;border-radius:inherit;}
-.dft-guide-btn:focus-visible{outline-offset:-2px;outline:2px solid var(--dsw-alias-border-l2);}
-.dft-guide-title{color:var(--dsw-alias-label-primary);font-size:14px;line-height:1.4;}
-.dft-guide-desc{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.4;}
+.dft-root{box-sizing:border-box;height:100%;min-height:0;color:var(--dsw-alias-label-primary);flex-direction:column;flex:1;padding-top:8px;font-size:13px;display:flex}
+.dft-screen{min-width:0;min-height:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);flex:1;padding:8px;overflow:hidden}
+.dft-host{position:relative;width:100%;height:100%;}
+.dft-screen .xterm{height:100%;}
+.dft-screen .xterm-viewport{background:var(--dsw-alias-bg-base);}
+.dft-entry{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsl-guide-entry-radius);background:var(--dsw-alias-bg-layer-1);align-items:center;gap:14px;width:100%;min-height:56px;padding:14px 20px;display:flex;position:relative;overflow:hidden}
+.dft-main{border-radius:0;width:100%;height:100%;position:absolute;inset:0}
+.dft-main:focus-visible{outline-offset:-2px}
+.dft-icon{width:26px;height:26px;color:var(--dsw-alias-label-secondary);pointer-events:none;flex:none;justify-content:center;align-items:center;display:flex;position:relative}
+.dft-text{pointer-events:none;flex-direction:column;flex:1;gap:3px;min-width:0;display:flex;position:relative}
+.dft-titleRow{align-items:center;gap:4px;min-width:0;display:flex}
+.dft-title{color:var(--dsw-alias-label-primary);white-space:nowrap;text-overflow:ellipsis;font-size:14px;line-height:1.4;overflow:hidden}
+.dft-description{color:var(--dsw-alias-label-tertiary);white-space:nowrap;text-overflow:ellipsis;font-size:11px;line-height:1.4;overflow:hidden}
+.dft-trigger{border-radius:4px;flex:none;width:20px;height:20px;padding:0}
+.dft-trigger svg{width:14px;height:14px;color:var(--dsw-alias-label-tertiary)}
+.dft-menu{pointer-events:auto;flex:none;display:flex}
+.dft-shortcut{pointer-events:none;position:relative}
+.dft-tab-title{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}
+.dft-tab-name{width:120px;min-width:48px;max-width:100%;color:inherit;font:inherit;background:var(--dsw-alias-bg-l1);border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);outline:none;padding:0 4px}
 `;
 
 function ensureCss() {
@@ -31,34 +61,68 @@ function ensureCss() {
 
 const zh = {
   title: '终端',
-  description: '专用 PTY 直连，无帧确认，输入到回显最短',
-  guideNew: '新建终端',
-  guideDesc: '在会话工作区运行命令',
-  'shortcut.noSession': '先在会话中打开终端',
+  new: '新建终端',
+  description: '在会话工作区运行命令',
+  shell: '选择 Shell',
+  shellLoading: '正在读取 Shell…',
+  shellEmpty: '没有可用的 Shell',
+  shellFailed: 'Shell 读取失败：{message}',
+  rename: '终端名称',
+  retry: '重试',
+  failed: '终端错误：{message}',
+  closed: '终端已关闭。',
+  exited: '进程已退出（{code}）',
+  reconnected: '已重新连接',
+  'shortcut.noSession': '请先选择会话',
 };
 
 const en = {
   title: 'Terminal',
-  description: 'Dedicated PTY link without frame acknowledgement',
-  guideNew: 'New terminal',
-  guideDesc: 'Run commands in the session workspace',
-  'shortcut.noSession': 'Open a terminal inside a session first',
+  new: 'New terminal',
+  description: 'Run commands in the Session workspace',
+  shell: 'Choose shell',
+  shellLoading: 'Loading shells…',
+  shellEmpty: 'No shells available',
+  shellFailed: 'Shell discovery failed: {message}',
+  rename: 'Terminal name',
+  retry: 'Retry',
+  failed: 'Terminal error: {message}',
+  closed: 'Terminal closed.',
+  exited: 'Process exited ({code})',
+  reconnected: 'Reconnected',
+  'shortcut.noSession': 'Select a session first',
 };
 
-function Guide({ title, description, useTabInfo }) {
-  ensureCss();
-  const { tab } = useTabInfo();
-  return h('div', { className: 'dft-guide', 'data-sidebar-right-guide-entry': 'fastterm' },
-    h('button', {
-      className: 'dft-guide-btn',
-      type: 'button',
-      'aria-label': description === undefined ? title : `${title} ${description}`,
-      onClick: () => tab.actions.openTab('fastterm', { replaceTab: true }),
-    },
-      h('span', { className: 'dft-guide-title' }, title ?? 'Fast Terminal'),
-      description === undefined ? null : h('span', { className: 'dft-guide-desc' }, description),
-    ),
+const titles = new Map();
+const titleListeners = new Set();
+
+function setStoredTitle(id, title) {
+  if (typeof title !== 'string' || title === '') return;
+  if (titles.get(id) === title) return;
+  titles.set(id, title);
+  for (const listener of titleListeners) listener();
+}
+
+function subscribeTitles(listener) {
+  titleListeners.add(listener);
+  return () => { titleListeners.delete(listener); };
+}
+
+function useStoredTitle(id, fallback) {
+  return useSyncExternalStore(
+    subscribeTitles,
+    () => titles.get(id) ?? fallback,
+    () => fallback,
   );
+}
+
+function rememberedShell() {
+  try { return localStorage.getItem(SHELL_KEY) ?? undefined; } catch { return undefined; }
+}
+
+function rememberShell(path) {
+  if (typeof path !== 'string' || path === '') return;
+  try { localStorage.setItem(SHELL_KEY, path); } catch { /* ignore */ }
 }
 
 function terminalIdOf(sessionId, tab) {
@@ -66,19 +130,140 @@ function terminalIdOf(sessionId, tab) {
   return String(sessionId ?? '') + '/' + tabId;
 }
 
+function TerminalIcon() {
+  return h('svg', {
+    width: '16',
+    height: '16',
+    viewBox: '0 0 16 16',
+    fill: 'none',
+    'aria-hidden': 'true',
+  },
+  h('path', { d: 'M3 4L7 8L3 12', stroke: 'currentColor' }),
+  h('path', { d: 'M9 12H13', stroke: 'currentColor' }));
+}
+
+function Guide({ title, description, kind, useTabInfo, loadShells, selectShell, t, useShortcuts }) {
+  ensureCss();
+  const shortcut = typeof useShortcuts === 'function'
+    ? useShortcuts((entries) => entries.find((entry) => entry.id === 'fastterm.new'))
+    : undefined;
+  const { tab } = useTabInfo();
+  const [open, setOpen] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState({ phase: 'loading' });
+  useEffect(() => {
+    if (!open) return undefined;
+    const lifetime = new AbortController();
+    loadShells(lifetime.signal).then((choices) => {
+      if (!lifetime.signal.aborted) setState({ phase: 'ready', choices });
+    }, (error) => {
+      if (!lifetime.signal.aborted) {
+        setState({ phase: 'failed', message: error instanceof Error ? error.message : String(error) });
+      }
+    });
+    return () => { lifetime.abort(); };
+  }, [open, attempt, loadShells]);
+  const items = state.phase === 'ready'
+    ? state.choices.shells.map((shell) => ({ id: shell.path, label: shell.name }))
+    : state.phase === 'loading'
+      ? [{ id: 'loading', label: t('shellLoading'), disabled: true }]
+      : [{ id: 'error', label: t('shellFailed', { message: state.message }), disabled: true },
+        { id: 'retry', label: t('retry') }];
+  const openTerminal = (shellPath) => {
+    tab.actions.openTab('fastterm', {
+      replaceTab: true,
+      ...(shellPath === undefined ? {} : { params: { shellPath } }),
+    });
+  };
+  return h('div', { className: 'dft-entry', 'data-sidebar-right-guide-entry': kind ?? 'fastterm' },
+    h(Button, {
+      variant: 'ghost',
+      className: 'dft-main',
+      'aria-label': description === undefined ? title : `${title} ${description}`,
+      'aria-keyshortcuts': shortcut === undefined ? undefined : shortcut.aria,
+      onClick: () => openTerminal(rememberedShell()),
+    }),
+    h('span', { className: 'dft-icon', 'aria-hidden': 'true' },
+      h(PluginArtworkTerminal, { size: description === undefined ? 22 : 26 })),
+    h('span', { className: 'dft-text' },
+      h('span', { className: 'dft-titleRow' },
+        h('span', { className: 'dft-title', 'aria-hidden': 'true' }, title),
+        h(Menu, {
+          open,
+          portal: true,
+          autoFocus: true,
+          align: 'end',
+          className: 'dft-menu',
+          items: items.length === 0 ? [{ id: 'empty', label: t('shellEmpty'), disabled: true }] : items,
+          selectedId: state.phase === 'ready' ? state.choices.selectedShell : undefined,
+          onClose: () => { setOpen(false); },
+          onSelect: (path) => {
+            if (path === 'retry') {
+              setState({ phase: 'loading' });
+              setAttempt((value) => value + 1);
+              return;
+            }
+            selectShell(path);
+            setOpen(false);
+            openTerminal(path);
+          },
+          anchor: h(Button, {
+            variant: 'ghost',
+            className: 'dft-trigger',
+            'aria-label': t('shell'),
+            'aria-haspopup': 'menu',
+            'aria-expanded': open,
+            onClick: () => {
+              if (!open) setState({ phase: 'loading' });
+              setOpen((value) => !value);
+            },
+          }, h(IconChevronDownOutlineRegular, {})),
+        })),
+      description === undefined ? null : h('span', { className: 'dft-description', 'aria-hidden': 'true' }, description)),
+    shortcut !== undefined && shortcut.keys.length > 0
+      ? h(ShortcutKeys, { keys: shortcut.keys, className: 'dft-shortcut' })
+      : null);
+}
+
+function terminalFontFamily(appTheme) {
+  const value = appTheme === undefined || appTheme === null || appTheme.fontFamilies === undefined
+    ? undefined
+    : appTheme.fontFamilies.terminal;
+  if (Array.isArray(value) && value.length > 0) {
+    return value.map((name) => (/\s/.test(name) ? '"' + String(name) + '"' : String(name))).join(', ');
+  }
+  if (typeof value === 'string' && value !== '') return value;
+  return 'Consolas, "Cascadia Mono", "Courier New", monospace';
+}
+
+function terminalFontSize(appTheme) {
+  const value = appTheme === undefined || appTheme === null || appTheme.fontSizes === undefined
+    ? undefined
+    : appTheme.fontSizes.terminal;
+  return typeof value === 'number' && value > 0 ? value : 13;
+}
+
 function Body(props) {
   ensureCss();
-  const { sessionId, useTabInfo } = props;
+  const { sessionId, useTabInfo, readShellPath, useTheme, t } = props;
   const info = typeof useTabInfo === 'function' ? useTabInfo() : undefined;
   const tab = info === undefined ? undefined : info.tab;
   const terminalId = terminalIdOf(sessionId, tab);
+  const appTheme = typeof useTheme === 'function' ? useTheme((value) => value) : undefined;
+  const fontFamily = terminalFontFamily(appTheme);
+  const fontSize = terminalFontSize(appTheme);
   const hostRef = useRef(null);
+  const screenRef = useRef(null);
+  const termRef = useRef(null);
+  const fitRef = useRef(null);
   useEffect(() => {
     const el = hostRef.current;
     if (el === null) return undefined;
+    const shellPath = typeof readShellPath === 'function' ? readShellPath(tab === undefined ? undefined : tab.id) : undefined;
     const term = new Terminal({
-      fontFamily: 'Consolas, "Cascadia Mono", "Courier New", monospace',
-      fontSize: 13,
+      fontFamily,
+      fontSize,
+      minimumContrastRatio: 4.5,
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: true,
@@ -86,6 +271,8 @@ function Body(props) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
+    termRef.current = term;
+    fitRef.current = fit;
     try { fit.fit(); } catch { /* ignore */ }
     let disposed = false;
     let socket = null;
@@ -105,10 +292,17 @@ function Body(props) {
       ws.onopen = () => {
         retry = 0;
         try { fit.fit(); } catch { /* ignore */ }
-        send({ type: 'attach', id: terminalId, sessionId, cols: term.cols, rows: term.rows });
+        send({
+          type: 'attach',
+          id: terminalId,
+          sessionId,
+          cols: term.cols,
+          rows: term.rows,
+          ...(shellPath === undefined ? {} : { shellPath }),
+        });
         if (reconnecting) {
           reconnecting = false;
-          term.write('\r\n\x1b[90m[已重新连接]\x1b[0m\r\n');
+          term.write('\r\n\x1b[90m[' + String(t === undefined ? 'reconnected' : t('reconnected')) + ']\x1b[0m\r\n');
         }
       };
       ws.onmessage = (ev) => {
@@ -121,11 +315,18 @@ function Body(props) {
         } else if (msg.type === 'data') {
           term.write(msg.data);
         } else if (msg.type === 'ready') {
+          if (typeof msg.title === 'string' && msg.title !== '') setStoredTitle(terminalId, msg.title);
           send({ type: 'resize', cols: term.cols, rows: term.rows });
+        } else if (msg.type === 'title') {
+          setStoredTitle(terminalId, msg.title);
         } else if (msg.type === 'exit') {
-          term.write('\r\n\x1b[90m[进程已退出]\x1b[0m\r\n');
+          const text = msg.code === undefined || msg.code === null
+            ? (t === undefined ? 'closed' : t('closed'))
+            : (t === undefined ? 'exited' : t('exited', { code: msg.code }));
+          term.write('\r\n\x1b[90m[' + String(text) + ']\x1b[0m\r\n');
         } else if (msg.type === 'error') {
-          term.write('\r\n\x1b[31m[错误: ' + String(msg.message) + ']\x1b[0m\r\n');
+          const text = t === undefined ? String(msg.message) : t('failed', { message: String(msg.message) });
+          term.write('\r\n\x1b[31m[' + String(text) + ']\x1b[0m\r\n');
         }
       };
       ws.onclose = () => {
@@ -162,20 +363,128 @@ function Body(props) {
       if (socket !== null) {
         try { socket.close(); } catch { /* ignore */ }
       }
+      termRef.current = null;
+      fitRef.current = null;
       term.dispose();
     };
   }, [terminalId]);
+  useEffect(() => {
+    const term = termRef.current;
+    const el = screenRef.current;
+    if (term === null || el === null) return;
+    const style = getComputedStyle(el);
+    term.options.theme = {
+      background: style.backgroundColor,
+      foreground: style.color,
+      cursor: style.color,
+      cursorAccent: style.backgroundColor,
+      selectionBackground: style.color,
+      selectionForeground: style.backgroundColor,
+      selectionInactiveBackground: style.color,
+    };
+    if (term.options.fontFamily !== fontFamily || term.options.fontSize !== fontSize) {
+      term.options.fontFamily = fontFamily;
+      term.options.fontSize = fontSize;
+      const fit = fitRef.current;
+      if (fit !== null) {
+        try { fit.fit(); } catch { /* ignore */ }
+      }
+    }
+  }, [appTheme, fontFamily, fontSize]);
   return h('div', { className: 'dft-root' },
-    h('div', { ref: hostRef, className: 'dft-host', 'data-dsh-fast-term': 'true' }),
+    h('div', { ref: screenRef, className: 'dft-screen' },
+      h('div', { ref: hostRef, className: 'dft-host', 'data-dsh-fast-term': 'true' }),
+    ),
   );
 }
 
-function Title({ t }) {
+function Title({ useTabInfo, t, terminalIdOf: idOf }) {
   ensureCss();
-  return h('span', null, t === undefined ? '终端' : t('title'));
+  const { tab } = useTabInfo();
+  const terminalId = typeof idOf === 'function' ? idOf(tab) : terminalIdOf(undefined, tab);
+  const fallback = t === undefined ? 'Terminal' : t('title');
+  const title = useStoredTitle(terminalId, fallback);
+  const [editing, setEditing] = useState(false);
+  const input = useRef(null);
+  const label = useRef(null);
+  const cancelled = useRef(false);
+  useEffect(() => {
+    // A body only learns its title once it attaches; read the host table so
+    // parked or inactive tabs still show their shell or renamed title.
+    const prefix = terminalId.slice(0, terminalId.lastIndexOf('/') + 1);
+    let live = true;
+    void fetch(LIST_PATH, { headers: { accept: 'application/json' } })
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((body) => {
+        if (!live || body === undefined || !Array.isArray(body.terminals)) return;
+        for (const entry of body.terminals) {
+          if (typeof entry.id !== 'string' || !entry.id.startsWith(prefix)) continue;
+          if (typeof entry.title === 'string') setStoredTitle(entry.id, entry.title);
+        }
+      })
+      .catch(() => { /* title stays local */ });
+    return () => { live = false; };
+  }, [terminalId]);
+  useLayoutEffect(() => {
+    if (editing) return undefined;
+    const chip = label.current === null ? undefined : label.current.closest('[data-dockkit-tab], [data-dockkit-float-grip]');
+    const rename = (event) => {
+      event.stopPropagation();
+      cancelled.current = false;
+      setEditing(true);
+    };
+    if (chip !== undefined && chip !== null) chip.addEventListener('dblclick', rename);
+    return () => {
+      if (chip !== undefined && chip !== null) chip.removeEventListener('dblclick', rename);
+    };
+  }, [editing]);
+  useLayoutEffect(() => {
+    if (!editing) return;
+    input.current?.focus();
+    input.current?.select();
+  }, [editing]);
+  const commit = (value) => {
+    const next = value.trim();
+    if (next === '' || next === title) return;
+    setStoredTitle(terminalId, next);
+    void fetch(RENAME_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: terminalId, title: next }),
+    }).then((response) => response.json().then((body) => {
+      if (!response.ok || body === null || body.ok !== true) throw new Error('rename rejected');
+      if (typeof body.title === 'string') setStoredTitle(terminalId, body.title);
+    })).catch(() => { setStoredTitle(terminalId, title); });
+  };
+  return h(Fragment, null,
+    h(TerminalIcon, {}),
+    editing
+      ? h('input', {
+        ref: input,
+        className: 'dft-tab-name',
+        defaultValue: title,
+        maxLength: 120,
+        'aria-label': t === undefined ? 'Terminal name' : t('rename'),
+        onPointerDown: (event) => { event.stopPropagation(); },
+        onClick: (event) => { event.stopPropagation(); },
+        onDoubleClick: (event) => { event.stopPropagation(); },
+        onBlur: (event) => {
+          setEditing(false);
+          if (!cancelled.current) commit(event.currentTarget.value);
+        },
+        onKeyDown: (event) => {
+          event.stopPropagation();
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if (event.key === 'Escape') {
+            cancelled.current = true;
+            event.currentTarget.blur();
+          } else if (event.key === 'Enter') event.currentTarget.blur();
+        },
+      })
+      : h('span', { ref: label, className: 'dft-tab-title' }, title));
 }
 
-const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs', 'shortcuts'];
+const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs', 'shortcuts', 'theme'];
 
 function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'fast-term: copy');
@@ -189,14 +498,15 @@ function apply(ctx) {
     title: () => t('title'),
     guide: [{
       id: 'new',
-      order: 21,
-      title: () => t('guideNew'),
-      description: () => t('guideDesc'),
+      order: 20,
+      title: () => t('new'),
+      description: () => t('description'),
+      icon: PluginArtworkTerminal,
     }],
   }), 'fast-term: type');
   ctx.effect(() => ctx.shortcuts.register({
     id: 'fastterm.new',
-    label: () => t('guideNew'),
+    label: () => t('new'),
     aliases: ['new terminal', 'shell'],
     defaults: {
       'desktop:macos': { code: 'Backquote', modifiers: ['control'] },
@@ -227,23 +537,53 @@ function apply(ctx) {
       }).catch(() => { /* ignore */ });
     });
   }, 'fast-term: close');
+  const readShellPath = (sessionId, tabId) => {
+    try {
+      const occurrence = ctx.sidebarRight.tabDomain.occurrence(sessionId, { id: tabId });
+      const params = occurrence.navigation.getSnapshot().params;
+      return params === undefined || typeof params.shellPath !== 'string' ? undefined : params.shellPath;
+    } catch {
+      return undefined;
+    }
+  };
   ctx.effect(() => ctx.slots.inject('sidebar.right.tab.guide.entry', () => ctx.slots.register({
     name: 'sidebar.right.tab.guide.entry',
     key: PLUGIN_ID,
     locale: NS,
-    inject: () => ({}),
+    inject: (sessionId) => ({
+      hooks: { shortcuts: ctx.shortcuts.catalog },
+      loadShells: async (signal) => {
+        const response = await fetch(SHELLS_PATH, { signal, headers: { accept: 'application/json' } });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const body = await response.json();
+        return body;
+      },
+      selectShell: (path) => { rememberShell(path); },
+      sessionId,
+    }),
   }, Guide)), 'fast-term: guide');
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
     name: 'sidebar.right.pane.tab',
     key: PLUGIN_ID,
     locale: NS,
-    inject: () => ({}),
+    inject: (sessionId) => ({
+      hooks: {
+        theme: {
+          getSnapshot: () => ctx.theme.getTheme(),
+          subscribe: (listener) => ctx.on('theme/change', listener),
+        },
+      },
+      readShellPath: (tabId) => readShellPath(sessionId, tabId),
+    }),
   }, Body)), 'fast-term: body');
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
     name: 'sidebar.right.pane.tab.title',
     key: PLUGIN_ID,
     locale: NS,
-    inject: () => ({ t }),
+    inject: (sessionId) => ({
+      t,
+      terminalIdOf: (tab) => terminalIdOf(sessionId, tab),
+    }),
   }, Title)), 'fast-term: title');
 }
 

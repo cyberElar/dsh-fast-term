@@ -6,6 +6,8 @@ DSH（DeepSeek Harness）右侧边栏里的**终端**：专用 PTY WebSocket，�
 
 ![screenshot](docs/screenshot.png)
 
+![guide](docs/guide.png)
+
 ```
 右侧边栏 → 新建终端（或 Ctrl + `）
 ```
@@ -29,8 +31,12 @@ dsh-fast-term 把 PTY 输出直接推到一条专用 WebSocket，不排队、不
 
 ## 功能
 
-- 会话级右侧栏标签，位置与自带终端一致（`sidebar.right.pane.tab` 槽位），标签标题「终端」
+- 会话级右侧栏标签，位置与自带终端一致（`sidebar.right.pane.tab` 槽位）
 - `Ctrl + \`` 新建终端（快捷键 id `fastterm.new`；隐藏自带终端后不会有冲突）
+- 入口卡片与自带终端同款：图标、标题、描述、`Ctrl + \`` 提示，带 shell 下拉菜单（PowerShell / cmd / 可发现的其它 shell），选择会被记住
+- 标签标题显示实际 shell（`powershell.exe`、`cmd.exe`…），双击可重命名，名字保存在宿主端（刷新页面、切换标签都不丢）
+- 终端配色跟随 DSH 主题（浅色 / 深色 / 跟随系统），字体与字号读主题令牌，和自带终端一致
+- 中英双语（跟随 DSH 语言设置）
 - 每个标签一个独立 PTY；标签切换、页面刷新后自动重连并回放快照，PTY 不随标签卸载退出（`keepMounted`）
 - 新标签的工作目录 = 会话工作目录（读 `workingDirectory` 投影）
 - 关闭标签会结束对应 PTY（`sidebarRight.registerCloseHandler` + `POST /api/dsh-fast-term/close`）
@@ -72,8 +78,8 @@ dsh plugin --profile desktop add dsh-fast-term
 ## 使用
 
 1. 打开右侧边栏
-2. 点「新建终端」，或直接按 `Ctrl + \``
-3. 直接输入命令即可；关闭标签 = 结束该 PTY
+2. 点「新建终端」，或直接按 `Ctrl + \``；点标题旁的箭头可以选择 shell
+3. 直接输入命令即可；双击标签标题可以重命名；关闭标签 = 结束该 PTY
 
 ## 安全
 
@@ -85,7 +91,8 @@ dsh plugin --profile desktop add dsh-fast-term
 - Windows 优先支持；POSIX 走 `$SHELL -l`
 - 重连快照上限 4 MiB，超出后丢弃最旧输出
 - 依赖 DSH 的 `sidebarRightTabs` 与 `sidebar.right.pane.tab` 槽位（在 0.2.1-rc.2 上验证）
-- 标签标题固定为「终端」，不显示当前 shell / 进程名
+- 重命名保存在宿主进程内存里：DSH 宿主重启后会回到 shell 名
+- 自带终端的「缺失 / 重连 / 只读」状态条还没有逐像素复刻，当前只用终端内的一行文字提示退出与错误
 - 替代自带终端依赖 `ui-sidebar-terminal` 这个 bundle id；DSH 升级改名时补丁会失效（终端本身仍可用）
 
 ## 开发
@@ -102,7 +109,9 @@ dsh plugin --profile web add "file:D:/path/to/dsh-fast-term"
 
 ## English
 
-`dsh-fast-term` is an in-layout terminal for DSH's right sidebar, built as a drop-in replacement for the built-in terminal. It spawns a real PTY through DSH's `subprocess` service and streams raw output over a dedicated WebSocket (`/api/dsh-fast-term/ws`), bypassing the shared Typert gateway mux and frame acknowledgements. Sessions persist across tab switches and page reloads (`keepMounted` + replay buffer), closing a tab terminates its PTY, and new tabs start in the session working directory. It takes over `Ctrl + \`` and, with a one-entry profile patch disabling `ui-sidebar-terminal`, hides the built-in terminal's button and UI entirely.
+`dsh-fast-term` is an in-layout terminal for DSH's right sidebar, built as a drop-in replacement for the built-in terminal. It spawns a real PTY through DSH's `subprocess` service and streams raw output over a dedicated WebSocket (`/api/dsh-fast-term/ws`), bypassing the shared Typert gateway mux and frame acknowledgements. Sessions persist across tab switches and page reloads (`keepMounted` + replay buffer), closing a tab terminates its PTY, and new tabs start in the session working directory.
+
+The UI mirrors the built-in terminal: the same guide card with a shell picker (the choice is remembered), tab titles showing the actual shell with double-click rename persisted on the host, colors and fonts taken from the DSH theme (light, dark, or system), and zh/en localization. It takes over `Ctrl + \`` and, with a one-entry profile patch disabling `ui-sidebar-terminal`, hides the built-in terminal's button and UI entirely.
 
 Measured on Windows: cold prompt 0.12 s vs 3.1 s native, flood-echo 2.9 s vs 12.8 s native.
 

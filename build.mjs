@@ -8,7 +8,7 @@ const result = await build({
   format: 'cjs',
   platform: 'browser',
   target: 'es2022',
-  external: ['react'],
+  external: ['react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives'],
   loader: { '.css': 'text' },
   legalComments: 'none',
   logLevel: 'info',

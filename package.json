@@ -1,6 +1,6 @@
 {
   "name": "dsh-fast-term",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "In-layout fast terminal for DeepSeek Harness: dedicated PTY websocket, no frame acknowledgement",
   "type": "module",
   "main": "lib/index.js",
@@ -13,7 +13,10 @@
     "lib/index.js",
     "lib/client.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "docs/screenshot.png",
+    "docs/guide.png"
   ],
   "dsh": {
     "bundle": {
