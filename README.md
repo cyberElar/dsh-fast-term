@@ -36,21 +36,21 @@ dsh-fast-term 把 PTY 输出直接推到一条专用 WebSocket，不排队、不
 
 ## 安装
 
-市场（推荐）：
+当前仓库还未发布到 npm，先按本地目录安装：
+
+```
+dsh plugin --profile desktop add "file:D:/Projects/dsh-fast-term"
+```
+
+发布之后可以走市场：
 
 ```
 设置 → 插件市场 → 搜索 dsh-fast-term
-```
-
-CLI：
-
-```
+# 或
 dsh plugin --profile desktop add dsh-fast-term
-# 或本地目录 / tarball
-dsh plugin --profile desktop add "file:D:/path/to/dsh-fast-term"
 ```
 
-安装后需要重启 DSH 宿主（右侧栏的客户端半在刷新页面后生效）。
+安装或更新后需要重启 DSH 宿主（右侧栏的客户端半在刷新页面后生效）。注意 `file:` 依赖在 pnpm 里是拷贝而不是软链，改了 `lib/` 之后要重新 `add` 一次（或手动把 `lib/index.js`、`lib/client.js` 覆盖到 profile 的 `node_modules/dsh-fast-term/lib/`）。
 
 ## 使用
 
