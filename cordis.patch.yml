@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-fast-term
+      name: dsh-fast-term
+      config: {}
