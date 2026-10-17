@@ -30,17 +30,19 @@ function ensureCss() {
 }
 
 const zh = {
-  title: '高速终端',
+  title: '终端',
   description: '专用 PTY 直连，无帧确认，输入到回显最短',
-  guideNew: '高速终端',
-  guideDesc: '绕过网关复用通道的实时终端',
+  guideNew: '新建终端',
+  guideDesc: '在会话工作区运行命令',
+  'shortcut.noSession': '先在会话中打开终端',
 };
 
 const en = {
-  title: 'Fast Terminal',
+  title: 'Terminal',
   description: 'Dedicated PTY link without frame acknowledgement',
-  guideNew: 'Fast Terminal',
-  guideDesc: 'Realtime terminal that bypasses the shared gateway mux',
+  guideNew: 'New terminal',
+  guideDesc: 'Run commands in the session workspace',
+  'shortcut.noSession': 'Open a terminal inside a session first',
 };
 
 function Guide({ title, description, useTabInfo }) {
@@ -168,29 +170,52 @@ function Body(props) {
   );
 }
 
-function Title() {
+function Title({ t }) {
   ensureCss();
-  return h('span', null, '高速终端');
+  return h('span', null, t === undefined ? '终端' : t('title'));
 }
 
-const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs'];
+const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs', 'shortcuts'];
 
 function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'fast-term: copy');
+  const t = ctx.locale.bind(NS);
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id: PLUGIN_ID,
     kind: 'fastterm',
     multiple: true,
     keepMounted: true,
     priority: 'builtin',
-    title: () => '高速终端',
+    title: () => t('title'),
     guide: [{
       id: 'new',
       order: 21,
-      title: () => '高速终端',
-      description: () => '专用 PTY 直连，无帧确认',
+      title: () => t('guideNew'),
+      description: () => t('guideDesc'),
     }],
   }), 'fast-term: type');
+  ctx.effect(() => ctx.shortcuts.register({
+    id: 'fastterm.new',
+    label: () => t('guideNew'),
+    aliases: ['new terminal', 'shell'],
+    defaults: {
+      'desktop:macos': { code: 'Backquote', modifiers: ['control'] },
+      'desktop:windows': { code: 'Backquote', modifiers: ['control'] },
+      'desktop:linux': { code: 'Backquote', modifiers: ['control'] },
+      'web:macos': { code: 'Backquote', modifiers: ['control'] },
+      'web:windows': { code: 'Backquote', modifiers: ['control'] },
+    },
+    regions: ['page', 'editable', 'terminal'],
+    modals: [],
+    resolve: ({ target: element }) => {
+      const target = ctx.sidebarRight.commandTarget(element);
+      if (target === undefined) return { status: 'blocked', reason: t('shortcut.noSession') };
+      return {
+        status: 'handled',
+        run: () => { ctx.sidebarRight.openTabFromTarget('fastterm', target); },
+      };
+    },
+  }), 'fast-term: shortcut');
   ctx.effect(() => {
     if (typeof ctx.sidebarRight.registerCloseHandler !== 'function') return;
     return ctx.sidebarRight.registerCloseHandler('fastterm', (sessionId, tab) => {
@@ -218,7 +243,7 @@ function apply(ctx) {
     name: 'sidebar.right.pane.tab.title',
     key: PLUGIN_ID,
     locale: NS,
-    inject: () => ({}),
+    inject: () => ({ t }),
   }, Title)), 'fast-term: title');
 }
 
