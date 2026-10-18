@@ -83,19 +83,23 @@ dsh plugin --profile desktop add dsh-fast-term
 
 ## 只读接口
 
-宿主进程提供两个只读 HTTP 接口，供脚本或 Agent 查看终端状态（仅回环 + Origin 校验）：
+宿主进程提供三个只读 HTTP 接口，供脚本或 Agent 查看终端状态（仅回环 + Origin 校验）：
 
 | 接口 | 说明 |
 | --- | --- |
 | `GET /api/dsh-fast-term/list` | 列出终端：`id` / `title` / `shell` / `pid` / `exited` |
 | `GET /api/dsh-fast-term/buffer?id=<id>&tail=8000&plain=1` | 返回该终端输出缓冲的尾部；省略 `id` 取最近一个；`plain=0` 返回带 ANSI 转义的原始 PTY 流 |
+| `GET /api/dsh-fast-term/screen?id=<id>&cols=120&rows=40` | 用缓冲区重放一帧**可见画面**，返回按行拆好的文本（`text`）；省略 `cols`/`rows` 用该终端最近一次尺寸 |
 
-`plain=1`（默认）会去掉转义序列并统一换行为 `\n`，适合直接阅读；它不是终端模拟器，不会还原光标移动，所以 `PSReadLine` 之类的逐键重绘会留下重复片段。
+`plain=1`（默认）会去掉转义序列并统一换行为 `\n`，适合直接阅读；它不是终端模拟器，不会还原光标移动，所以 `PSReadLine` 之类的逐键重绘会留下重复片段。要看光标定位重画的全屏 TUI（btop、vim、tmux 状态栏），用 `screen`：宿主用 `@xterm/headless` 把缓冲重放成 120×40 的屏幕，再按行输出纯文本，得到的就是用户此刻看到的画面。
 
 ```bash
 curl "http://127.0.0.1:PORT/api/dsh-fast-term/list"
 curl "http://127.0.0.1:PORT/api/dsh-fast-term/buffer?id=<id>&tail=4000"
+curl "http://127.0.0.1:PORT/api/dsh-fast-term/screen?id=<id>&cols=120&rows=40"
 ```
+
+重放只读取缓冲区，不会向 PTY 写入任何内容；若缓冲已超过 4 MiB、最旧输出被丢弃，重放结果可能缺少早期状态（响应里的 `truncated` 会标记这一点）。
 
 ## 安全
 
@@ -116,13 +120,13 @@ curl "http://127.0.0.1:PORT/api/dsh-fast-term/buffer?id=<id>&tail=4000"
 
 ```
 npm install
-node build.mjs          # 把 src/client.js 打包成 lib/client.js
+node build.mjs          # src/client.js → lib/client.js；src/host.js → lib/index.js（内联 @xterm/headless）
 node --check lib/index.js
 dsh plugin --profile web add "file:D:/path/to/dsh-fast-term"
 ```
 
-- `lib/index.js`（宿主半）：`ctx.subprocess.spawnTerminal` 起 PTY，`webServer.registerUpgrade` 挂 `/api/dsh-fast-term/ws`，按 `sessionId/tabId` 维护常驻会话与回放缓冲
-- `src/client.js`（浏览器半）：xterm.js + FitAddon，注册右侧栏标签与三个槽位；打包时用 `window.__ModuleLoader__.load` 包装，`react` 外置
+- `src/host.js` → `lib/index.js`（宿主半）：`ctx.subprocess.spawnTerminal` 起 PTY，`webServer.registerUpgrade` 挂 `/api/dsh-fast-term/ws`，按 `sessionId/tabId` 维护常驻会话与回放缓冲；`GET /screen` 用打包进来的 `@xterm/headless` 重放画面
+- `src/client.js` → `lib/client.js`（浏览器半）：xterm.js + FitAddon，注册右侧栏标签与三个槽位；打包时用 `window.__ModuleLoader__.load` 包装，`react` 外置
 
 ## English
 
@@ -131,6 +135,8 @@ dsh plugin --profile web add "file:D:/path/to/dsh-fast-term"
 The UI mirrors the built-in terminal: the same guide card with a shell picker (the choice is remembered), tab titles showing the actual shell with double-click rename persisted on the host, colors and fonts taken from the DSH theme (light, dark, or system), and zh/en localization. It takes over `Ctrl + \`` and, with a one-entry profile patch disabling `ui-sidebar-terminal`, hides the built-in terminal's button and UI entirely.
 
 Measured on Windows: cold prompt 0.12 s vs 3.1 s native, flood-echo 2.9 s vs 12.8 s native.
+
+Read-only endpoints let scripts (or an agent) inspect terminals: `/list`, `/buffer` (raw or stripped tail), and `/screen`, which replays the buffer through a bundled headless terminal and returns the visible 120×40 frame as text — enough to read full-screen TUIs such as btop or vim without touching the PTY.
 
 ## License
 

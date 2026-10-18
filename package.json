@@ -1,6 +1,6 @@
 {
   "name": "dsh-fast-term",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "In-layout fast terminal for DeepSeek Harness: dedicated PTY websocket, no frame acknowledgement",
   "type": "module",
   "main": "lib/index.js",
@@ -31,8 +31,12 @@
   },
   "devDependencies": {
     "@xterm/addon-fit": "^0.10.0",
+    "@xterm/headless": "^5.5.0",
     "@xterm/xterm": "^5.5.0",
     "esbuild": "^0.25.0"
+  },
+  "scripts": {
+    "build": "node build.mjs"
   },
   "engines": {
     "node": ">=22"
