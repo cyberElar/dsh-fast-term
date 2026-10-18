@@ -81,10 +81,26 @@ dsh plugin --profile desktop add dsh-fast-term
 2. 点「新建终端」，或直接按 `Ctrl + \``；点标题旁的箭头可以选择 shell
 3. 直接输入命令即可；双击标签标题可以重命名；关闭标签 = 结束该 PTY
 
+## 只读接口
+
+宿主进程提供两个只读 HTTP 接口，供脚本或 Agent 查看终端状态（仅回环 + Origin 校验）：
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/dsh-fast-term/list` | 列出终端：`id` / `title` / `shell` / `pid` / `exited` |
+| `GET /api/dsh-fast-term/buffer?id=<id>&tail=8000&plain=1` | 返回该终端输出缓冲的尾部；省略 `id` 取最近一个；`plain=0` 返回带 ANSI 转义的原始 PTY 流 |
+
+`plain=1`（默认）会去掉转义序列并统一换行为 `\n`，适合直接阅读；它不是终端模拟器，不会还原光标移动，所以 `PSReadLine` 之类的逐键重绘会留下重复片段。
+
+```bash
+curl "http://127.0.0.1:PORT/api/dsh-fast-term/list"
+curl "http://127.0.0.1:PORT/api/dsh-fast-term/buffer?id=<id>&tail=4000"
+```
+
 ## 安全
 
 - 页面与宿主不同源时（桌面版页面是 `dsh-app://app`）从 `__DSH_TRANSPORT__.streamBaseUrl` 解析宿主地址，只连接回环地址；Web 端仍用当前页面地址
-- WebSocket 与关闭路由只接受 loopback（`127.0.0.1` / `::1` / `::ffff:127.0.0.1`），并校验 Origin 的 host 与请求 host 一致
+- WebSocket 与只读路由只接受 loopback（`127.0.0.1` / `::1` / `::ffff:127.0.0.1`），并校验 Origin 的 host 与请求 host 一致；本机进程仍可直接读取（其本就能 attach 该 PTY）
 - 终端进程以当前用户身份、无沙箱运行（与系统终端一致），不要在不可信页面同源环境里暴露该端口
 
 ## 已知限制
