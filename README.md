@@ -42,6 +42,7 @@ dsh-fast-term 把 PTY 输出直接推到一条专用 WebSocket，不排队、不
 - 关闭标签会结束对应 PTY（`sidebarRight.registerCloseHandler` + `POST /api/dsh-fast-term/close`）
 - Windows 默认 PowerShell：pwsh → Windows PowerShell → ComSpec 依次回退，可用 `DSH_FAST_TERM_SHELL` 覆盖
 - 过滤 xterm 的 Device Attributes 应答，避免 PowerShell 把 `[?1;2c` 当输入回显
+- 外部输入开关：默认只读，只有终端界面本身可以输入；点终端右上角的「只读」胶囊才会允许其它进程（含 Agent）通过 WebSocket 写入，可另配命令白名单
 
 ## 安装
 
@@ -80,8 +81,9 @@ dsh plugin --profile desktop add dsh-fast-term
 1. 打开右侧边栏
 2. 点「新建终端」，或直接按 `Ctrl + \``；点标题旁的箭头可以选择 shell
 3. 直接输入命令即可；双击标签标题可以重命名；关闭标签 = 结束该 PTY
+4. 终端右上角的胶囊显示当前输入权限：`只读` 表示只有这个界面能输入；点一下变成 `可输入`，其它程序或 Agent 才能通过 WebSocket 向该 PTY 写入；再点一下恢复只读
 
-## 只读接口
+## 只读接口与输入开关
 
 宿主进程提供三个只读 HTTP 接口，供脚本或 Agent 查看终端状态（仅回环 + Origin 校验）：
 
@@ -90,6 +92,15 @@ dsh plugin --profile desktop add dsh-fast-term
 | `GET /api/dsh-fast-term/list` | 列出终端：`id` / `title` / `shell` / `pid` / `exited` |
 | `GET /api/dsh-fast-term/buffer?id=<id>&tail=8000&plain=1` | 返回该终端输出缓冲的尾部；省略 `id` 取最近一个；`plain=0` 返回带 ANSI 转义的原始 PTY 流 |
 | `GET /api/dsh-fast-term/screen?id=<id>&cols=120&rows=40` | 用缓冲区重放一帧**可见画面**，返回按行拆好的文本（`text`）；省略 `cols`/`rows` 用该终端最近一次尺寸 |
+
+输入开关保存在 `~/.dsh/fast-term.json`，也可通过接口读写：
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/dsh-fast-term/config` | 读取 `{allowExternalInput, allowedCommands}` |
+| `POST /api/dsh-fast-term/config` | 改开关，例如 `{"allowExternalInput":true,"allowedCommands":["echo","git status"]}` |
+
+`allowExternalInput` 为 `false`（默认）时，只有终端界面自己的连接（attach 时声明 `writer: "ui"`）可以输入；其它 WebSocket 客户端发来的 `input` 会被拒绝并收到 `{"type":"denied","reason":"read-only"}`。打开后，`allowedCommands` 非空则按**整行**前缀匹配（大小写不敏感，回车才提交）：不在白名单里的行被丢弃并返回 `{"type":"denied","reason":"command-not-allowed","detail":"<行>"}`；留空表示不限制。
 
 `plain=1`（默认）会去掉转义序列并统一换行为 `\n`，适合直接阅读；它不是终端模拟器，不会还原光标移动，所以 `PSReadLine` 之类的逐键重绘会留下重复片段。要看光标定位重画的全屏 TUI（btop、vim、tmux 状态栏），用 `screen`：宿主用 `@xterm/headless` 把缓冲重放成 120×40 的屏幕，再按行输出纯文本，得到的就是用户此刻看到的画面。
 

@@ -26,6 +26,7 @@ const CLOSE_PATH = '/api/dsh-fast-term/close';
 const RENAME_PATH = '/api/dsh-fast-term/rename';
 const LIST_PATH = '/api/dsh-fast-term/list';
 const SHELLS_PATH = '/api/dsh-fast-term/shells';
+const CONFIG_PATH = '/api/dsh-fast-term/config';
 const SHELL_KEY = 'dsh-fast-term:shell';
 
 /**
@@ -59,10 +60,15 @@ function websocketUrl(path) {
 
 const CSS = `
 .dft-root{box-sizing:border-box;height:100%;min-height:0;color:var(--dsw-alias-label-primary);flex-direction:column;flex:1;padding-top:8px;font-size:13px;display:flex}
-.dft-screen{min-width:0;min-height:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);flex:1;padding:8px;overflow:hidden}
+.dft-screen{min-width:0;min-height:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);flex:1;padding:8px;overflow:hidden;position:relative}
 .dft-host{position:relative;width:100%;height:100%;}
 .dft-screen .xterm{height:100%;}
 .dft-screen .xterm-viewport{background:var(--dsw-alias-bg-base);}
+.dft-lock{position:absolute;top:2px;right:6px;z-index:4;display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;border-radius:9px;border:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);font:11px/1 ui-sans-serif,system-ui,sans-serif;cursor:pointer;opacity:.55;transition:opacity .12s ease}
+.dft-lock:hover,.dft-lock:focus-visible{opacity:1;outline:none}
+.dft-lock[data-locked='false']{color:var(--dsw-alias-label-primary);opacity:.85}
+.dft-lock[data-denied='true']{border-color:var(--dsw-alias-label-warning,#c98a00);color:var(--dsw-alias-label-warning,#c98a00);opacity:1}
+.dft-lock-dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
 .dft-entry{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsl-guide-entry-radius);background:var(--dsw-alias-bg-layer-1);align-items:center;gap:14px;width:100%;min-height:56px;padding:14px 20px;display:flex;position:relative;overflow:hidden}
 .dft-main{border-radius:0;width:100%;height:100%;position:absolute;inset:0}
 .dft-main:focus-visible{outline-offset:-2px}
@@ -103,6 +109,13 @@ const zh = {
   exited: '进程已退出（{code}）',
   reconnected: '已重新连接',
   'shortcut.noSession': '请先选择会话',
+  'lock.readonly': '只读',
+  'lock.readonlyHint': '外部输入已锁定：只有这个终端界面可以输入。点击允许外部程序或 Agent 输入。',
+  'lock.unlocked': '可输入',
+  'lock.unlockedHint': '外部输入已允许。点击恢复只读。',
+  'lock.whitelist': '白名单 {count} 条',
+  'lock.denied': '已拒绝外部输入',
+  'lock.failed': '切换失败：{message}',
 };
 
 const en = {
@@ -120,6 +133,13 @@ const en = {
   exited: 'Process exited ({code})',
   reconnected: 'Reconnected',
   'shortcut.noSession': 'Select a session first',
+  'lock.readonly': 'Read-only',
+  'lock.readonlyHint': 'External input is locked: only this terminal view can type. Click to allow programs or an agent to type.',
+  'lock.unlocked': 'Input on',
+  'lock.unlockedHint': 'External input is allowed. Click to go back to read-only.',
+  'lock.whitelist': '{count} allowed command(s)',
+  'lock.denied': 'External input rejected',
+  'lock.failed': 'Could not switch: {message}',
 };
 
 const titles = new Map();
@@ -285,6 +305,50 @@ function Body(props) {
   const screenRef = useRef(null);
   const termRef = useRef(null);
   const fitRef = useRef(null);
+  const [lock, setLock] = useState({ allowExternalInput: false, allowedCommands: [] });
+  const [denied, setDenied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const flashDenied = useRef(() => {});
+  const deniedTimer = useRef(null);
+  flashDenied.current = () => {
+    setDenied(true);
+    if (deniedTimer.current !== null) clearTimeout(deniedTimer.current);
+    deniedTimer.current = setTimeout(() => { setDenied(false); }, 1600);
+  };
+  useEffect(() => () => {
+    if (deniedTimer.current !== null) clearTimeout(deniedTimer.current);
+  }, []);
+  useEffect(() => {
+    let live = true;
+    void fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((body) => {
+        if (live && body !== undefined && body.config !== undefined) setLock(body.config);
+      })
+      .catch(() => { /* keep defaults */ });
+    return () => { live = false; };
+  }, []);
+  const toggleLock = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const response = await fetch(CONFIG_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ allowExternalInput: !(lock !== undefined && lock.allowExternalInput === true) }),
+      });
+      const body = await response.json();
+      if (!response.ok || body === null || body.ok !== true) throw new Error('HTTP ' + String(response.status));
+      if (body.config !== undefined) setLock(body.config);
+    } catch (error) {
+      const text = t === undefined
+        ? 'Could not switch: ' + String(error instanceof Error ? error.message : error)
+        : t('lock.failed', { message: String(error instanceof Error ? error.message : error) });
+      termRef.current?.write('\r\n\x1b[90m[' + String(text) + ']\x1b[0m\r\n');
+    } finally {
+      setBusy(false);
+    }
+  };
   useEffect(() => {
     const el = hostRef.current;
     if (el === null) return undefined;
@@ -324,6 +388,7 @@ function Body(props) {
           type: 'attach',
           id: terminalId,
           sessionId,
+          writer: 'ui',
           cols: term.cols,
           rows: term.rows,
           ...(shellPath === undefined ? {} : { shellPath }),
@@ -347,6 +412,10 @@ function Body(props) {
           send({ type: 'resize', cols: term.cols, rows: term.rows });
         } else if (msg.type === 'title') {
           setStoredTitle(terminalId, msg.title);
+        } else if (msg.type === 'config') {
+          if (msg.config !== undefined) setLock(msg.config);
+        } else if (msg.type === 'denied') {
+          flashDenied.current();
         } else if (msg.type === 'exit') {
           const text = msg.code === undefined || msg.code === null
             ? (t === undefined ? 'closed' : t('closed'))
@@ -419,9 +488,27 @@ function Body(props) {
       }
     }
   }, [appTheme, fontFamily, fontSize]);
+  const say = (key, vars) => (t === undefined ? key : t(key, vars));
+  const locked = !(lock !== undefined && lock.allowExternalInput === true);
+  const listCount = lock !== undefined && Array.isArray(lock.allowedCommands) ? lock.allowedCommands.length : 0;
+  const lockLabel = denied ? say('lock.denied') : locked ? say('lock.readonly') : say('lock.unlocked');
+  const lockHint = locked ? say('lock.readonlyHint') : say('lock.unlockedHint');
   return h('div', { className: 'dft-root' },
     h('div', { ref: screenRef, className: 'dft-screen' },
       h('div', { ref: hostRef, className: 'dft-host', 'data-dsh-fast-term': 'true' }),
+      h('button', {
+        type: 'button',
+        className: 'dft-lock',
+        'data-locked': locked ? 'true' : 'false',
+        'data-denied': denied ? 'true' : 'false',
+        title: listCount > 0 ? lockHint + ' · ' + say('lock.whitelist', { count: listCount }) : lockHint,
+        'aria-label': lockHint,
+        disabled: busy,
+        onClick: () => { void toggleLock(); },
+      },
+      h('span', { className: 'dft-lock-dot', 'aria-hidden': 'true' }),
+      lockLabel,
+      listCount > 0 ? ' · ' + String(listCount) : null),
     ),
   );
 }

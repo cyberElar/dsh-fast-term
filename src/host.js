@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -15,7 +15,9 @@ const RENAME_PATH = '/api/dsh-fast-term/rename';
 const LIST_PATH = '/api/dsh-fast-term/list';
 const BUFFER_PATH = '/api/dsh-fast-term/buffer';
 const SCREEN_PATH = '/api/dsh-fast-term/screen';
+const CONFIG_PATH = '/api/dsh-fast-term/config';
 const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
+const MAX_PENDING_LINE = 4096;
 
 function findExecutable(fileName) {
   const pathValue = process.env.PATH ?? '';
@@ -120,6 +122,64 @@ function chooseShell(requested) {
 function clampInt(value, fallback, min, max) {
   const n = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * External-input guardrail. The plugin UI always types; any other websocket
+ * client is read-only until the user unlocks it here. This is a deliberate
+ * safety switch, not a security boundary: a local process that can call
+ * /api/dsh-fast-term/config can flip it.
+ */
+const DEFAULT_CONFIG = Object.freeze({ allowExternalInput: false, allowedCommands: [] });
+let configCache;
+
+function configFilePath() {
+  return join(homedir(), '.dsh', 'fast-term.json');
+}
+
+function normalizeConfig(raw) {
+  const source = raw !== null && typeof raw === 'object' ? raw : {};
+  const commands = Array.isArray(source.allowedCommands)
+    ? source.allowedCommands
+      .filter((entry) => typeof entry === 'string')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== '')
+      .slice(0, 50)
+    : [];
+  return { allowExternalInput: source.allowExternalInput === true, allowedCommands: commands };
+}
+
+function loadConfig() {
+  const now = Date.now();
+  if (configCache !== undefined && now - configCache.at < 1000) return configCache.value;
+  let value = { ...DEFAULT_CONFIG, allowedCommands: [] };
+  try {
+    value = normalizeConfig(JSON.parse(readFileSync(configFilePath(), 'utf8')));
+  } catch {
+    /* defaults */
+  }
+  configCache = { at: now, value };
+  return value;
+}
+
+function saveConfig(next) {
+  const value = normalizeConfig(next);
+  try {
+    mkdirSync(join(homedir(), '.dsh'), { recursive: true });
+    writeFileSync(configFilePath(), JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    /* keep the in-memory value */
+  }
+  configCache = { at: Date.now(), value };
+  return value;
+}
+
+/** Whether one completed input line is on the whitelist. */
+function allowsCommand(config, line) {
+  const trimmed = line.trim();
+  if (trimmed === '') return true;
+  const lowered = trimmed.toLowerCase();
+  return config.allowedCommands.some((prefix) => lowered.startsWith(prefix.toLowerCase()));
 }
 
 const ANSI_PATTERN = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)|\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b[@-_]/g;
@@ -290,6 +350,16 @@ class TermSession {
 export function apply(ctx) {
   const sessions = new Map();
   const pending = new Map();
+
+  const broadcastConfig = (config) => {
+    const payload = JSON.stringify({ type: 'config', config });
+    for (const session of sessions.values()) {
+      for (const client of session.clients) {
+        if (client.readyState !== WebSocket.OPEN) continue;
+        try { client.send(payload); } catch { /* ignore */ }
+      }
+    }
+  };
 
   const createSession = async (msg) => {
     const subprocess = ctx.get('subprocess');
@@ -513,12 +583,76 @@ export function apply(ctx) {
         },
       }));
 
+      disposers.push(webCtx.webServer.register({
+        kind: 'exact',
+        path: CONFIG_PATH,
+        handler: async (req, res) => {
+          if (!guardHttp(req, res)) return;
+          if (req.method === 'GET') {
+            writeJson(res, 200, { config: loadConfig() });
+            return;
+          }
+          if (req.method !== 'POST') {
+            writeJson(res, 405, { error: 'method not allowed' });
+            return;
+          }
+          const body = await readJsonBody(req);
+          if (body === undefined || body === null || typeof body !== 'object') {
+            writeJson(res, 400, { error: 'invalid body' });
+            return;
+          }
+          const current = loadConfig();
+          const patch = {};
+          if (typeof body.allowExternalInput === 'boolean') patch.allowExternalInput = body.allowExternalInput;
+          if (Array.isArray(body.allowedCommands)) patch.allowedCommands = body.allowedCommands;
+          if (Object.keys(patch).length === 0) {
+            writeJson(res, 400, { error: 'nothing to update' });
+            return;
+          }
+          const next = saveConfig({ ...current, ...patch });
+          broadcastConfig(next);
+          writeJson(res, 200, { ok: true, config: next });
+        },
+      }));
+
       const attach = (ws) => {
         let bound = null;
         let disposed = false;
+        let writer = 'external';
+        let pendingLine = '';
+        let deniedAt = 0;
         const send = (payload) => {
           if (ws.readyState !== WebSocket.OPEN) return;
           try { ws.send(JSON.stringify(payload)); } catch { /* ignore */ }
+        };
+        const deny = (reason, detail) => {
+          const now = Date.now();
+          if (now - deniedAt < 1000) return;
+          deniedAt = now;
+          send({ type: 'denied', reason, ...(detail === undefined ? {} : { detail }) });
+        };
+        const accepts = (data) => {
+          const config = loadConfig();
+          if (writer === 'ui') return data;
+          if (!config.allowExternalInput) {
+            deny('read-only');
+            return undefined;
+          }
+          if (config.allowedCommands.length === 0) return data;
+          // Whitelist mode is line-oriented: buffer until Enter, then run the
+          // completed line only when it starts with an allowed command.
+          pendingLine += data;
+          if (pendingLine.length > MAX_PENDING_LINE) pendingLine = pendingLine.slice(-MAX_PENDING_LINE);
+          let accepted = '';
+          let index = pendingLine.search(/[\r\n]/);
+          while (index >= 0) {
+            const line = pendingLine.slice(0, index);
+            pendingLine = pendingLine.slice(index + 1);
+            if (allowsCommand(config, line)) accepted += line + '\r';
+            else deny('command-not-allowed', line);
+            index = pendingLine.search(/[\r\n]/);
+          }
+          return accepted === '' ? undefined : accepted;
         };
 
         const bind = async (msg) => {
@@ -539,7 +673,7 @@ export function apply(ctx) {
           bound = session;
           session.setSize(msg.cols, msg.rows);
           session.clients.add(ws);
-          send({ type: 'ready', id: session.id, pid: session.handle.pid, fresh: existed === false, title: session.title, shell: session.shellPath });
+          send({ type: 'ready', id: session.id, pid: session.handle.pid, fresh: existed === false, title: session.title, shell: session.shellPath, config: loadConfig() });
           if (existed) send({ type: 'snapshot', data: session.snapshot() });
           if (session.exited) send({ type: 'exit' });
         };
@@ -549,15 +683,22 @@ export function apply(ctx) {
           try { msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf8')); } catch { return; }
           if (msg === null || typeof msg !== 'object') return;
           if (msg.type === 'attach') {
+            writer = msg.writer === 'ui' ? 'ui' : 'external';
             void bind(msg);
             return;
           }
           if (bound === null) return;
           if (msg.type === 'input' && typeof msg.data === 'string') {
-            void bound.write(msg.data).catch(() => { /* ignore */ });
+            const data = accepts(msg.data);
+            if (data === undefined || data === '') return;
+            void bound.write(data).catch(() => { /* ignore */ });
             return;
           }
           if (msg.type === 'resize') {
+            if (writer !== 'ui' && !loadConfig().allowExternalInput) {
+              deny('resize-read-only');
+              return;
+            }
             bound.setSize(msg.cols, msg.rows);
             bound.resize(clampInt(msg.cols, 80, 2, 500), clampInt(msg.rows, 24, 2, 200));
           }
