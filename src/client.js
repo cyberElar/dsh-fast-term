@@ -28,6 +28,35 @@ const LIST_PATH = '/api/dsh-fast-term/list';
 const SHELLS_PATH = '/api/dsh-fast-term/shells';
 const SHELL_KEY = 'dsh-fast-term:shell';
 
+/**
+ * Backend origin for sockets. The Desktop shell serves the app from
+ * `dsh-app://app` and injects the real host origin as `__DSH_TRANSPORT__.streamBaseUrl`;
+ * a plain web session falls back to the document base (same origin).
+ */
+function transportBase() {
+  const injected = typeof window === 'undefined' ? undefined : window.__DSH_TRANSPORT__;
+  const raw = injected !== undefined && injected !== null && typeof injected.streamBaseUrl === 'string' && injected.streamBaseUrl !== ''
+    ? injected.streamBaseUrl
+    : (typeof document === 'undefined' ? location.href : document.baseURI);
+  try {
+    return new URL(raw, location.href);
+  } catch {
+    return new URL(location.href);
+  }
+}
+
+function absoluteUrl(path) {
+  const base = transportBase();
+  const href = base.href.endsWith('/') ? base.href : base.href + '/';
+  return new URL(path.replace(/^\/+/u, ''), href).href;
+}
+
+function websocketUrl(path) {
+  const url = new URL(absoluteUrl(path));
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.href;
+}
+
 const CSS = `
 .dft-root{box-sizing:border-box;height:100%;min-height:0;color:var(--dsw-alias-label-primary);flex-direction:column;flex:1;padding-top:8px;font-size:13px;display:flex}
 .dft-screen{min-width:0;min-height:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);flex:1;padding:8px;overflow:hidden}
@@ -279,7 +308,6 @@ function Body(props) {
     let retry = 0;
     let retryTimer = null;
     let reconnecting = false;
-    const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
     const send = (payload) => {
       if (socket !== null && socket.readyState === 1) {
         try { socket.send(JSON.stringify(payload)); } catch { /* ignore */ }
@@ -287,7 +315,7 @@ function Body(props) {
     };
     const connect = () => {
       if (disposed) return;
-      const ws = new WebSocket(proto + location.host + WS_PATH);
+      const ws = new WebSocket(websocketUrl(WS_PATH));
       socket = ws;
       ws.onopen = () => {
         retry = 0;
