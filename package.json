@@ -1,56 +1,56 @@
 {
-    "name":  "dsh-fast-term",
-    "version":  "0.3.1",
-    "description":  "In-layout fast terminal for DeepSeek Harness: dedicated PTY websocket, no frame acknowledgement",
-    "type":  "module",
-    "main":  "lib/index.js",
-    "exports":  {
-                    ".":  "./lib/index.js",
-                    "./client":  "./lib/client.js",
-                    "./package.json":  "./package.json"
-                },
-    "files":  [
-                  "lib/index.js",
-                  "lib/client.js",
-                  "cordis.patch.yml",
-                  "README.md",
-                  "LICENSE",
-                  "docs/screenshot.png",
-                  "docs/guide.png"
-              ],
-    "dsh":  {
-                "bundle":  {
-                               "patch":  "./cordis.patch.yml"
-                           },
-                "client":  {
-                               "platform":  "web"
-                           }
-            },
-    "dependencies":  {
-                         "ws":  "^8.22.0"
-                     },
-    "devDependencies":  {
-                            "@xterm/addon-fit":  "^0.10.0",
-                            "@xterm/xterm":  "^5.5.0",
-                            "esbuild":  "^0.25.0"
-                        },
-    "engines":  {
-                    "node":  "\u003e=22"
-                },
-    "peerDependencies":  {
-                             "react":  "^18.3.1"
-                         },
-    "peerDependenciesMeta":  {
-                                 "react":  {
-                                               "optional":  true
-                                           }
-                             },
-    "keywords":  [
-                     "dsh",
-                     "dsh-plugin",
-                     "terminal",
-                     "pty",
-                     "xterm"
-                 ],
-    "license":  "MIT"
+  "name": "dsh-fast-term",
+  "version": "0.3.2",
+  "description": "In-layout fast terminal for DeepSeek Harness: dedicated PTY websocket, no frame acknowledgement",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs/screenshot.png",
+    "docs/guide.png"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "esbuild": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "terminal",
+    "pty",
+    "xterm"
+  ],
+  "license": "MIT"
 }
