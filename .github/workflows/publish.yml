@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # setup-node's bundled npm (11.x on Node 24) already supports OIDC trusted
+      # publishing; intentionally not upgrading to npm@latest here.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm install -g npm@latest
+      - run: node --version
       - run: npm --version
-      # Staged publishing: CI only submits the tarball; a maintainer must approve
-      # it with 2FA (npm stage approve / npmjs.com) before it goes live.
-      - run: npm stage publish
+      - run: npm publish --loglevel verbose
