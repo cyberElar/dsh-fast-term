@@ -81,6 +81,8 @@ dsh plugin --profile desktop add "file:D:/Projects/dsh-fast-term"
 4. 终端右上角的胶囊显示当前输入权限：`只读` 表示只有这个界面能输入；点一下变成 `可输入`，其它程序或 Agent 才能通过 WebSocket 向该 PTY 写入；再点一下恢复只读
 5. 鼠标选中文本后 `Ctrl+C`（或 `Ctrl+Shift+C`）复制、`Ctrl+V` 粘贴；也可以右键打开菜单（复制 / 粘贴 / 全选）。没有选中时 `Ctrl+C` 照常发送 SIGINT
 
+Windows 下进程的环境变量在启动那一刻就固定了，宿主连续跑很久时终端会一直用旧的 `PATH`（新装的 CLI 找不到）。本插件在创建 PTY 前会从注册表重读 `Path`（HKLM + HKCU，展开 `%VAR%`，5 秒缓存），所以改完 PATH 不用重启宿主，新开一个标签就能拿到；宿主运行时额外追加、且仍在磁盘上的目录也会保留。
+
 ## 只读接口与输入开关
 
 宿主进程提供三个只读 HTTP 接口，供脚本或 Agent 查看终端状态（仅回环 + Origin 校验）：

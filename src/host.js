@@ -4,6 +4,7 @@ import { delimiter, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { Terminal as HeadlessTerminal } from '@xterm/headless';
 import WebSocket, { WebSocketServer } from 'ws';
+import { windowsTerminalPath } from './winpath.js';
 
 export const name = 'dsh-fast-term';
 export const inject = ['webServer', 'subprocess'];
@@ -54,6 +55,22 @@ function windowsPowerShellPath() {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Environment for a new PTY. Windows hands every process a copy of its parent's
+ * environment block at creation, so a host that has been running for hours still
+ * has the PATH it started with: a CLI installed since then would be missing in
+ * the terminal. Re-read PATH from the registry so a new tab sees current values.
+ */
+function terminalEnvironment() {
+  const env = { COLORTERM: 'truecolor' };
+  const freshPath = windowsTerminalPath();
+  if (freshPath !== undefined) {
+    const key = Object.keys(process.env).find((entry) => entry.toUpperCase() === 'PATH') ?? 'Path';
+    env[key] = freshPath;
+  }
+  return env;
 }
 
 const SHELL_CANDIDATES = process.platform === 'win32'
@@ -376,7 +393,7 @@ export function apply(ctx) {
       // `env: { ...env, TERM: spec.terminalType }`），不传就会得到一个字符串
       // "undefined" 的 TERM，ssh 透传到远端后 tmux 会拒绝启动。
       terminalType: 'xterm-256color',
-      env: { COLORTERM: 'truecolor' },
+      env: terminalEnvironment(),
       graceMs: 5000,
     });
     const session = new TermSession(msg.id, handle, shellBaseName(shellPath), shellPath);
