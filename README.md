@@ -152,6 +152,7 @@ dsh plugin --profile web add "file:D:/path/to/dsh-fast-term"
 
 - `src/host.js` → `lib/index.js`（宿主半）：`ctx.subprocess.spawnTerminal` 起 PTY，`webServer.registerUpgrade` 挂 `/api/dsh-fast-term/ws`，按 `sessionId/tabId` 维护常驻会话与回放缓冲；`GET /screen` 用打包进来的 `@xterm/headless` 重放画面
 - `src/client.js` → `lib/client.js`（浏览器半）：xterm.js + FitAddon，注册右侧栏标签与三个槽位；打包时用 `window.__ModuleLoader__.load` 包装，`react` 外置
+- 发布走 **staged**：`.github/workflows/publish.yml` 里是 `npm stage publish`（OIDC trusted publisher，只授权了提交、没授权直发），CI 跑完版本还在暂存区，要到 npmjs.com 的 Staged Packages 页（或 `npm stage approve <id>`）用 2FA 批准才真正上线；批准前 `npm i dsh-fast-term@<version>` 装不到
 
 ## English
 

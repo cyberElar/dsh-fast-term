@@ -19,4 +19,6 @@ jobs:
           node-version: 24
       - run: npm install -g npm@latest
       - run: npm --version
-      - run: npm publish
+      # Staged publishing: CI only submits the tarball; a maintainer must approve
+      # it with 2FA (npm stage approve / npmjs.com) before it goes live.
+      - run: npm stage publish
