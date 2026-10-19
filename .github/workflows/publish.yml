@@ -21,4 +21,18 @@ jobs:
           node-version: 24
       - run: node --version
       - run: npm --version
-      - run: npm publish --loglevel verbose
+      # Dispatching this by hand for a version that is already on npm used to
+      # turn the run red for no reason; report it and move on instead.
+      - name: Check whether this version is already published
+        id: check
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name@$version is already on npm; nothing to publish."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.check.outputs.published == 'false'
+        run: npm publish --loglevel verbose
