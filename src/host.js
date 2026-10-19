@@ -745,4 +745,63 @@ export function apply(ctx) {
       };
     }, 'dsh-fast-term: websocket');
   });
+
+  // Agent-facing read tool. It executes inside this plugin host, not inside the
+  // calling session's file sandbox, so the sidebar terminal stays readable no
+  // matter which permission level the composer is set to.
+  ctx.inject(['tools'], (toolsCtx) => {
+    const pickSession = (id) => {
+      if (typeof id === 'string' && id !== '') return sessions.get(id);
+      return [...sessions.values()].at(-1);
+    };
+    const readTool = {
+      name: 'dsh_fast_term_read',
+      description:
+        '读取 DSH 侧边栏终端（fast-term）的输出。读取在插件宿主进程内完成，不经过会话的文件沙箱，因此任何权限模式（workspace-write 或 danger-full-access）下都可用。list=true 时只列出终端而不读输出。',
+      parameters: {
+        type: 'object',
+        properties: {
+          list: { type: 'boolean', description: 'true 时只列出当前终端（id、标题、shell、字节数、是否已退出）' },
+          id: { type: 'string', description: '终端 id（取自 list 输出）；省略时读取最近打开的那个终端' },
+          tail: { type: 'integer', description: '返回末尾多少个字符，默认 8000，范围 200–200000' },
+          screen: { type: 'boolean', description: 'true 时按屏幕行渲染（适合全屏 TUI），默认 false 返回去掉转义序列的纯文本' },
+        },
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: String(value) }],
+      },
+      async execute(args) {
+        const input = args !== null && typeof args === 'object' ? args : {};
+        if (input.list === true) {
+          if (sessions.size === 0) return '当前没有打开的侧边终端。';
+          return [...sessions.values()]
+            .map((session) => `${session.id}\t${session.title}\t${session.shellPath}\t${session.bytes} bytes${session.exited ? '\texited' : ''}`)
+            .join('\n');
+        }
+        const session = pickSession(input.id);
+        if (session === undefined) {
+          return typeof input.id === 'string' && input.id !== ''
+            ? `找不到侧边终端 ${input.id}。`
+            : '当前没有打开的侧边终端。';
+        }
+        const tail = clampInt(input.tail, 8000, 200, 200000);
+        const header = `[${session.id} · ${session.title}${session.exited ? ' · exited' : ''} · ${session.bytes} bytes]`;
+        if (input.screen === true) {
+          const screen = await renderScreen(session, 120, 40);
+          const body = screen.lines.join('\n').replace(/\s+$/u, '');
+          return `${header}\n${body === '' ? '(空屏幕)' : body}`;
+        }
+        const text = stripTerminalText(session.snapshot());
+        const body = (text.length > tail ? text.slice(-tail) : text).replace(/\s+$/u, '');
+        return `${header}\n${body === '' ? '(还没有输出)' : body}`;
+      },
+    };
+    try {
+      toolsCtx.tools.register(readTool);
+    } catch {
+      // The tools service is optional: never break the terminal over it.
+    }
+  });
 }

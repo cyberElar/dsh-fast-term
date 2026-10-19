@@ -112,6 +112,19 @@ curl "http://127.0.0.1:PORT/api/dsh-fast-term/screen?id=<id>&cols=120&rows=40"
 
 重放只读取缓冲区，不会向 PTY 写入任何内容；若缓冲已超过 4 MiB、最旧输出被丢弃，重放结果可能缺少早期状态（响应里的 `truncated` 会标记这一点）。
 
+## Agent 读取（工具）
+
+宿主还会注册一个 Agent 工具 `dsh_fast_term_read`：Agent 读边栏终端不必再依赖会话的权限档。工具调用跑在插件宿主进程内，不经过会话的文件沙箱，所以输入框设成 `workspace-write` 还是 `danger-full-access` 都能读（也绕开沙箱初始化失败时工具全挂的情况）。
+
+| 参数 | 说明 |
+| --- | --- |
+| `list` | `true` 时只列出终端：`id`、标题、shell、缓冲字节数、是否已退出 |
+| `id` | 终端 id（取自 `list`）；省略时读最近打开的那个 |
+| `tail` | 返回末尾多少个字符，默认 8000（200–200000） |
+| `screen` | `true` 时按 120×40 屏幕行渲染（全屏 TUI 用），默认返回去掉转义序列的纯文本 |
+
+工具只读缓冲，不会向 PTY 写入；要让 Agent 替你敲命令，仍需在界面里点开 `可输入` 胶囊。
+
 ## 安全
 
 - 页面与宿主不同源时（桌面版页面是 `dsh-app://app`）从 `__DSH_TRANSPORT__.streamBaseUrl` 解析宿主地址，只连接回环地址；Web 端仍用当前页面地址
@@ -151,6 +164,8 @@ Text can be copied out of the terminal: select and press `Ctrl+C` or `Ctrl+Shift
 Measured on Windows: cold prompt 0.12 s vs 3.1 s native, flood-echo 2.9 s vs 12.8 s native.
 
 Read-only endpoints let scripts (or an agent) inspect terminals: `/list`, `/buffer` (raw or stripped tail), and `/screen`, which replays the buffer through a bundled headless terminal and returns the visible 120×40 frame as text — enough to read full-screen TUIs such as btop or vim without touching the PTY.
+
+An agent tool, `dsh_fast_term_read`, exposes the same reads (`list`, `id`, `tail`, `screen`) from inside the plugin host process. Because the call never enters the session's file sandbox, the sidebar terminal stays readable whatever permission level the composer is set to.
 
 ## License
 
