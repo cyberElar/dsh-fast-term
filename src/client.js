@@ -83,14 +83,28 @@ const CSS = `
 .dft-shortcut{pointer-events:none;position:relative}
 .dft-tab-title{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}
 .dft-tab-name{width:120px;min-width:48px;max-width:100%;color:inherit;font:inherit;background:var(--dsw-alias-bg-l1);border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);outline:none;padding:0 4px}
+.dft-ctx{position:absolute;z-index:6;min-width:150px;padding:4px;border:.5px solid var(--dsw-alias-border-l3);border-radius:6px;background:var(--dsw-alias-bg-layer-1);box-shadow:0 8px 28px rgba(0,0,0,.18);font:12px/1.2 ui-sans-serif,system-ui,sans-serif;color:var(--dsw-alias-label-primary)}
+.dft-ctx-item{appearance:none;display:flex;align-items:center;justify-content:space-between;gap:24px;width:100%;padding:5px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:default}
+.dft-ctx-item:hover:not(:disabled),.dft-ctx-item:focus-visible{background:var(--dsw-alias-bg-l1);outline:none}
+.dft-ctx-item:disabled{color:var(--dsw-alias-label-tertiary);opacity:.6}
+.dft-ctx-key{color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap}
+.dft-flash{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:6;max-width:calc(100% - 32px);padding:4px 10px;border-radius:10px;border:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font:11px/1.3 ui-sans-serif,system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+.dft-flash[data-error='true']{color:var(--dsw-alias-label-warning,#c98a00);border-color:var(--dsw-alias-label-warning,#c98a00)}
 `;
 
 function ensureCss() {
   if (typeof document === 'undefined') return;
-  if (document.getElementById(STYLE_ID)) return;
+  const content = CSS + '\n' + xtermCss;
+  const existing = document.getElementById(STYLE_ID);
+  if (existing !== null) {
+    // A hot-reloaded client reuses the style tag created by the previous
+    // instance of this module, so refresh its text instead of bailing out.
+    if (existing.textContent !== content) existing.textContent = content;
+    return;
+  }
   const style = document.createElement('style');
   style.id = STYLE_ID;
-  style.textContent = CSS + '\n' + xtermCss;
+  style.textContent = content;
   document.head.appendChild(style);
 }
 
@@ -116,6 +130,13 @@ const zh = {
   'lock.whitelist': '白名单 {count} 条',
   'lock.denied': '已拒绝外部输入',
   'lock.failed': '切换失败：{message}',
+  'copy.menu': '复制',
+  'copy.paste': '粘贴',
+  'copy.selectAll': '全选',
+  'copy.copied': '已复制 {count} 个字符',
+  'copy.nothing': '没有选中内容',
+  'copy.failed': '复制失败：剪贴板不可用，请检查剪贴板权限后重试',
+  'copy.pasteFailed': '无法读取剪贴板，请按 Ctrl+Shift+V 粘贴',
 };
 
 const en = {
@@ -140,6 +161,13 @@ const en = {
   'lock.whitelist': '{count} allowed command(s)',
   'lock.denied': 'External input rejected',
   'lock.failed': 'Could not switch: {message}',
+  'copy.menu': 'Copy',
+  'copy.paste': 'Paste',
+  'copy.selectAll': 'Select all',
+  'copy.copied': 'Copied {count} characters',
+  'copy.nothing': 'Nothing selected',
+  'copy.failed': 'Copy failed — the clipboard is unavailable; check the clipboard permission and try again',
+  'copy.pasteFailed': 'Cannot read the clipboard — press Ctrl+Shift+V',
 };
 
 const titles = new Map();
@@ -292,6 +320,65 @@ function terminalFontSize(appTheme) {
   return typeof value === 'number' && value > 0 ? value : 13;
 }
 
+function isMacPlatform() {
+  if (typeof navigator === 'undefined') return false;
+  const platform = navigator.userAgentData !== undefined && typeof navigator.userAgentData.platform === 'string'
+    ? navigator.userAgentData.platform
+    : (typeof navigator.platform === 'string' ? navigator.platform : '');
+  return /mac/i.test(platform);
+}
+
+/** Copy synchronously through a throwaway textarea when the async clipboard is unavailable. */
+function legacyCopy(text) {
+  if (typeof document === 'undefined' || document.body === null) return false;
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.setAttribute('aria-hidden', 'true');
+  area.style.position = 'fixed';
+  area.style.top = '0';
+  area.style.left = '-9999px';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  return copied;
+}
+
+async function copyText(text) {
+  if (typeof text !== 'string' || text === '') return false;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard !== undefined
+      && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // The clipboard permission can be denied (or absent outside a secure
+    // context); fall back to the copy command while the gesture is still live.
+  }
+  return legacyCopy(text);
+}
+
+async function readClipboardText() {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard !== undefined
+      && typeof navigator.clipboard.readText === 'function') {
+      const text = await navigator.clipboard.readText();
+      return typeof text === 'string' ? text : '';
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function Body(props) {
   ensureCss();
   const { sessionId, useTabInfo, readShellPath, useTheme, t } = props;
@@ -308,16 +395,100 @@ function Body(props) {
   const [lock, setLock] = useState({ allowExternalInput: false, allowedCommands: [] });
   const [denied, setDenied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [menu, setMenu] = useState(null);
+  const [flash, setFlash] = useState(null);
   const flashDenied = useRef(() => {});
   const deniedTimer = useRef(null);
+  const menuRef = useRef(null);
+  const flashTimer = useRef(null);
+  const liveRef = useRef(true);
+  const say = (key, vars) => (t === undefined ? key : t(key, vars));
+  const showFlash = (text, error) => {
+    if (!liveRef.current) return;
+    setFlash({ text, error: error === true });
+    if (flashTimer.current !== null) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => { setFlash(null); }, 1800);
+  };
+  const copySelection = () => {
+    const term = termRef.current;
+    if (term === null) return;
+    const selection = term.getSelection();
+    if (selection === '') {
+      showFlash(say('copy.nothing'));
+      return;
+    }
+    void copyText(selection).then((copied) => {
+      if (copied) {
+        showFlash(say('copy.copied', { count: selection.length }));
+      } else {
+        showFlash(say('copy.failed'), true);
+      }
+    });
+  };
+  const pasteSelection = () => {
+    const term = termRef.current;
+    if (term === null) return;
+    void readClipboardText().then((text) => {
+      if (text === null || text === '') {
+        showFlash(say('copy.pasteFailed'), true);
+        return;
+      }
+      term.paste(text);
+    });
+  };
+  const closeMenu = () => {
+    setMenu(null);
+    termRef.current?.focus();
+  };
+  const openMenu = (event) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest('.dft-lock') !== null) return;
+    const term = termRef.current;
+    const screen = screenRef.current;
+    if (term === null || screen === null) return;
+    event.preventDefault();
+    const frame = screen.getBoundingClientRect();
+    const x = Math.max(4, Math.min(event.clientX - frame.left, frame.width - 176));
+    const y = Math.max(4, Math.min(event.clientY - frame.top, frame.height - 104));
+    setMenu({ x, y, hasSelection: term.hasSelection() });
+  };
   flashDenied.current = () => {
     setDenied(true);
     if (deniedTimer.current !== null) clearTimeout(deniedTimer.current);
     deniedTimer.current = setTimeout(() => { setDenied(false); }, 1600);
   };
-  useEffect(() => () => {
-    if (deniedTimer.current !== null) clearTimeout(deniedTimer.current);
+  useEffect(() => {
+    liveRef.current = true;
+    return () => {
+      liveRef.current = false;
+      if (deniedTimer.current !== null) clearTimeout(deniedTimer.current);
+      if (flashTimer.current !== null) clearTimeout(flashTimer.current);
+    };
   }, []);
+  useEffect(() => {
+    if (menu === null) return undefined;
+    const dismiss = (event) => {
+      const el = menuRef.current;
+      if (el !== null && event.target instanceof Node && el.contains(event.target)) return;
+      setMenu(null);
+    };
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMenu(null);
+      termRef.current?.focus();
+    };
+    const onBlur = () => { setMenu(null); };
+    window.addEventListener('pointerdown', dismiss, true);
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('pointerdown', dismiss, true);
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [menu]);
   useEffect(() => {
     let live = true;
     void fetch(CONFIG_PATH, { headers: { accept: 'application/json' } })
@@ -367,6 +538,51 @@ function Body(props) {
     termRef.current = term;
     fitRef.current = fit;
     try { fit.fit(); } catch { /* ignore */ }
+    const mac = isMacPlatform();
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown' || mac) return true;
+      const key = event.key;
+      if (event.altKey || event.metaKey) return true;
+      const lower = typeof key === 'string' ? key.toLowerCase() : '';
+      if (event.ctrlKey) {
+        if (lower === 'c') {
+          // Ctrl+C copies when something is selected; without a selection it
+          // still reaches the PTY as SIGINT. Ctrl+Shift+C copies too, matching
+          // the usual terminal convention.
+          if (term.hasSelection()) {
+            event.preventDefault();
+            event.stopPropagation();
+            copySelection();
+            return false;
+          }
+          return true;
+        }
+        if (key === 'Insert' && !event.shiftKey) {
+          if (term.hasSelection()) {
+            event.preventDefault();
+            event.stopPropagation();
+            copySelection();
+          }
+          return false;
+        }
+        if (lower === 'v') {
+          // Ctrl+Shift+V keeps the browser's native paste path.
+          if (event.shiftKey) return true;
+          event.preventDefault();
+          event.stopPropagation();
+          pasteSelection();
+          return false;
+        }
+        return true;
+      }
+      if (event.shiftKey && key === 'Insert') {
+        event.preventDefault();
+        event.stopPropagation();
+        pasteSelection();
+        return false;
+      }
+      return true;
+    });
     let disposed = false;
     let socket = null;
     let retry = 0;
@@ -488,13 +704,24 @@ function Body(props) {
       }
     }
   }, [appTheme, fontFamily, fontSize]);
-  const say = (key, vars) => (t === undefined ? key : t(key, vars));
   const locked = !(lock !== undefined && lock.allowExternalInput === true);
   const listCount = lock !== undefined && Array.isArray(lock.allowedCommands) ? lock.allowedCommands.length : 0;
   const lockLabel = denied ? say('lock.denied') : locked ? say('lock.readonly') : say('lock.unlocked');
   const lockHint = locked ? say('lock.readonlyHint') : say('lock.unlockedHint');
+  const menuItems = menu === null ? [] : [
+    { id: 'copy', label: say('copy.menu'), hint: 'Ctrl+C', disabled: menu.hasSelection !== true, run: copySelection },
+    { id: 'paste', label: say('copy.paste'), hint: 'Ctrl+V', run: pasteSelection },
+    {
+      id: 'all',
+      label: say('copy.selectAll'),
+      run: () => {
+        termRef.current?.selectAll();
+        termRef.current?.focus();
+      },
+    },
+  ];
   return h('div', { className: 'dft-root' },
-    h('div', { ref: screenRef, className: 'dft-screen' },
+    h('div', { ref: screenRef, className: 'dft-screen', onContextMenu: openMenu },
       h('div', { ref: hostRef, className: 'dft-host', 'data-dsh-fast-term': 'true' }),
       h('button', {
         type: 'button',
@@ -509,6 +736,30 @@ function Body(props) {
       h('span', { className: 'dft-lock-dot', 'aria-hidden': 'true' }),
       lockLabel,
       listCount > 0 ? ' · ' + String(listCount) : null),
+      menu === null ? null : h('div', {
+        ref: menuRef,
+        className: 'dft-ctx',
+        role: 'menu',
+        style: { left: menu.x + 'px', top: menu.y + 'px' },
+        onContextMenu: (event) => { event.preventDefault(); },
+      }, menuItems.map((item) => h('button', {
+        key: item.id,
+        type: 'button',
+        role: 'menuitem',
+        className: 'dft-ctx-item',
+        disabled: item.disabled === true,
+        onClick: () => {
+          closeMenu();
+          item.run();
+        },
+      },
+      h('span', null, item.label),
+      item.hint === undefined ? null : h('span', { className: 'dft-ctx-key' }, item.hint)))),
+      flash === null ? null : h('div', {
+        className: 'dft-flash',
+        'data-error': flash.error === true ? 'true' : undefined,
+        role: 'status',
+      }, flash.text),
     ),
   );
 }

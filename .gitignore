@@ -2,5 +2,6 @@ node_modules/
 *.tgz
 dist/
 .playwright-mcp/
+.npm-cache/
 .DS_Store
 Thumbs.db

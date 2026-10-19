@@ -43,21 +43,18 @@ dsh-fast-term 把 PTY 输出直接推到一条专用 WebSocket，不排队、不
 - Windows 默认 PowerShell：pwsh → Windows PowerShell → ComSpec 依次回退，可用 `DSH_FAST_TERM_SHELL` 覆盖
 - 过滤 xterm 的 Device Attributes 应答，避免 PowerShell 把 `[?1;2c` 当输入回显
 - 外部输入开关：默认只读，只有终端界面本身可以输入；点终端右上角的「只读」胶囊才会允许其它进程（含 Agent）通过 WebSocket 写入，可另配命令白名单
+- 复制粘贴：选中后 `Ctrl+C` 或 `Ctrl+Shift+C` 复制（没有选中时 `Ctrl+C` 仍是 SIGINT），`Ctrl+V` 粘贴；`Ctrl+Shift+V` 走浏览器原生粘贴；右键菜单提供复制 / 粘贴 / 全选，复制成功会在底部提示字数
 
 ## 安装
 
-当前仓库还未发布到 npm，先按本地目录安装：
+```
+dsh plugin --profile desktop add dsh-fast-term
+```
+
+也可以在「设置 → 插件市场」里搜索 `dsh-fast-term`。本地开发时直接装目录：
 
 ```
 dsh plugin --profile desktop add "file:D:/Projects/dsh-fast-term"
-```
-
-发布之后可以走市场：
-
-```
-设置 → 插件市场 → 搜索 dsh-fast-term
-# 或
-dsh plugin --profile desktop add dsh-fast-term
 ```
 
 安装或更新后需要重启 DSH 宿主（右侧栏的客户端半在刷新页面后生效）。注意 `file:` 依赖在 pnpm 里是拷贝而不是软链，改了 `lib/` 之后要重新 `add` 一次（或手动把 `lib/index.js`、`lib/client.js` 覆盖到 profile 的 `node_modules/dsh-fast-term/lib/`）。
@@ -82,6 +79,7 @@ dsh plugin --profile desktop add dsh-fast-term
 2. 点「新建终端」，或直接按 `Ctrl + \``；点标题旁的箭头可以选择 shell
 3. 直接输入命令即可；双击标签标题可以重命名；关闭标签 = 结束该 PTY
 4. 终端右上角的胶囊显示当前输入权限：`只读` 表示只有这个界面能输入；点一下变成 `可输入`，其它程序或 Agent 才能通过 WebSocket 向该 PTY 写入；再点一下恢复只读
+5. 鼠标选中文本后 `Ctrl+C`（或 `Ctrl+Shift+C`）复制、`Ctrl+V` 粘贴；也可以右键打开菜单（复制 / 粘贴 / 全选）。没有选中时 `Ctrl+C` 照常发送 SIGINT
 
 ## 只读接口与输入开关
 
@@ -124,6 +122,7 @@ curl "http://127.0.0.1:PORT/api/dsh-fast-term/screen?id=<id>&cols=120&rows=40"
 - 重连快照上限 4 MiB，超出后丢弃最旧输出
 - 依赖 DSH 的 `sidebarRightTabs` 与 `sidebar.right.pane.tab` 槽位（在 0.2.1-rc.2 上验证）
 - 重命名保存在宿主进程内存里：DSH 宿主重启后会回到 shell 名
+- 复制 / 粘贴默认走 `navigator.clipboard`；若运行环境拒绝剪贴板权限，复制会提示失败（检查权限后重试），粘贴可用 `Ctrl+Shift+V` 的原生通道
 - 自带终端的「缺失 / 重连 / 只读」状态条还没有逐像素复刻，当前只用终端内的一行文字提示退出与错误
 - 替代自带终端依赖 `ui-sidebar-terminal` 这个 bundle id；DSH 升级改名时补丁会失效（终端本身仍可用）
 
@@ -144,6 +143,8 @@ dsh plugin --profile web add "file:D:/path/to/dsh-fast-term"
 `dsh-fast-term` is an in-layout terminal for DSH's right sidebar, built as a drop-in replacement for the built-in terminal. It spawns a real PTY through DSH's `subprocess` service and streams raw output over a dedicated WebSocket (`/api/dsh-fast-term/ws`), bypassing the shared Typert gateway mux and frame acknowledgements. Sessions persist across tab switches and page reloads (`keepMounted` + replay buffer), closing a tab terminates its PTY, and new tabs start in the session working directory.
 
 The UI mirrors the built-in terminal: the same guide card with a shell picker (the choice is remembered), tab titles showing the actual shell with double-click rename persisted on the host, colors and fonts taken from the DSH theme (light, dark, or system), and zh/en localization. It takes over `Ctrl + \`` and, with a one-entry profile patch disabling `ui-sidebar-terminal`, hides the built-in terminal's button and UI entirely.
+
+Text can be copied out of the terminal: select and press `Ctrl+C` or `Ctrl+Shift+C` (plain `Ctrl+C` without a selection still sends SIGINT), paste with `Ctrl+V`, or use the right-click menu for copy, paste and select-all. `Ctrl+Shift+V` keeps the browser's native paste path; a short toast reports how many characters were copied.
 
 Measured on Windows: cold prompt 0.12 s vs 3.1 s native, flood-echo 2.9 s vs 12.8 s native.
 

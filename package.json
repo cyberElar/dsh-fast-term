@@ -1,6 +1,6 @@
 {
   "name": "dsh-fast-term",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "In-layout fast terminal for DeepSeek Harness: dedicated PTY websocket, no frame acknowledgement",
   "type": "module",
   "main": "lib/index.js",
@@ -56,5 +56,14 @@
     "pty",
     "xterm"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cyberElar/dsh-fast-term.git"
+  },
+  "homepage": "https://github.com/cyberElar/dsh-fast-term#readme",
+  "bugs": {
+    "url": "https://github.com/cyberElar/dsh-fast-term/issues"
+  },
+  "author": "cyberElar",
   "license": "MIT"
 }
