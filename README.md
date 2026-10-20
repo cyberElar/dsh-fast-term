@@ -45,7 +45,7 @@ dsh plugin --profile desktop add dsh-fast-term
 也可以在「设置 → 插件市场」中搜索 `dsh-fast-term`。本地开发时安装目录：
 
 ```bash
-dsh plugin --profile desktop add "file:D:/Projects/dsh-fast-term"
+dsh plugin --profile desktop add "file:<path>"
 ```
 
 安装或更新后需要重启 DSH 宿主。`file:` 依赖是拷贝而非软链，修改 `lib/` 后需重新执行 `add`，或手动覆盖 profile 下的 `node_modules/dsh-fast-term/lib/`。
@@ -151,7 +151,7 @@ curl "http://127.0.0.1:PORT/api/dsh-fast-term/screen?id=<id>&cols=120&rows=40"
 npm install
 node build.mjs
 node --check lib/index.js
-dsh plugin --profile web add "file:D:/path/to/dsh-fast-term"
+dsh plugin --profile web add "file:<path>"
 ```
 
 发布由 GitHub Actions 在 GitHub Release 发布时通过 OIDC trusted publishing 完成。
