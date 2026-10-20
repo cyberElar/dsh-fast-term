@@ -137,6 +137,7 @@ const zh = {
   'copy.nothing': '没有选中内容',
   'copy.failed': '复制失败：剪贴板不可用，请检查剪贴板权限后重试',
   'copy.pasteFailed': '无法读取剪贴板，请按 Ctrl+Shift+V 粘贴',
+  'shortcut.terminalInput': '终端优先（{keys}）',
 };
 
 const en = {
@@ -168,6 +169,7 @@ const en = {
   'copy.nothing': 'Nothing selected',
   'copy.failed': 'Copy failed — the clipboard is unavailable; check the clipboard permission and try again',
   'copy.pasteFailed': 'Cannot read the clipboard — press Ctrl+Shift+V',
+  'shortcut.terminalInput': 'Terminal input priority ({keys})',
 };
 
 const titles = new Map();
@@ -379,6 +381,150 @@ async function readClipboardText() {
   return null;
 }
 
+const PASSTHROUGH_PREFIX = 'fastterm.passthrough.';
+
+/**
+ * Desktop shortcuts are resolved by the Electron main process before the page
+ * sees the key, and desktop bindings deliberately override focused regions.
+ * While our terminal owns the keyboard we park a fixed shortcut on every
+ * single-Ctrl binding that DSH would otherwise capture; the shortcut service
+ * then marks those rows conflicted, the main process drops the keys from its
+ * intercept set, and xterm receives them (Ctrl+B becomes the tmux prefix).
+ * The fixed entries are conflict markers only: they never run, are never
+ * persisted, and disappear again as soon as the terminal loses focus.
+ */
+const passthrough = {
+  service: undefined,
+  holders: 0,
+  disposers: [],
+  signature: '',
+  busy: false,
+  pending: false,
+  unsubscribe: null,
+  label: undefined,
+};
+
+function passthroughIdentity(binding) {
+  const codes = binding.secondCode === undefined ? [binding.code] : [binding.code, binding.secondCode].sort();
+  return [...binding.modifiers, ...codes].join('+');
+}
+
+function passthroughCandidates(service) {
+  const candidates = new Map();
+  const rows = service.catalog.getSnapshot();
+  if (!Array.isArray(rows)) return candidates;
+  for (const row of rows) {
+    if (row === null || row === undefined) continue;
+    if (typeof row.id !== 'string' || row.id.startsWith('fastterm.')) continue;
+    const binding = row.binding;
+    if (binding === null || binding === undefined) continue;
+    if (typeof binding.code !== 'string' || !Array.isArray(binding.modifiers)) continue;
+    if (row.issue !== null && row.issue !== undefined) continue;
+    // Only claim rows that are enabled, or that are already disabled purely by
+    // markers we parked ourselves (so a second refresh recognises its own work).
+    const conflicts = Array.isArray(row.conflicts) ? row.conflicts : [];
+    if (conflicts.some((id) => typeof id !== 'string' || !id.startsWith(PASSTHROUGH_PREFIX))) continue;
+    if (binding.secondCode !== undefined) continue;
+    if (binding.modifiers.length !== 1 || binding.modifiers[0] !== 'control') continue;
+    const id = PASSTHROUGH_PREFIX + passthroughIdentity(binding).replace(/\+/gu, '-').toLowerCase();
+    candidates.set(id, binding);
+  }
+  return candidates;
+}
+
+function releasePassthrough() {
+  passthrough.signature = '';
+  const disposers = passthrough.disposers;
+  passthrough.disposers = [];
+  for (const dispose of disposers) {
+    try { dispose(); } catch { /* keep releasing the rest */ }
+  }
+}
+
+function refreshPassthrough() {
+  const service = passthrough.service;
+  if (service === undefined) return;
+  const active = passthrough.holders > 0
+    && service.runtime === 'desktop'
+    && (service.platform === 'windows' || service.platform === 'macos');
+  if (!active) {
+    releasePassthrough();
+    return;
+  }
+  if (passthrough.busy) {
+    passthrough.pending = true;
+    return;
+  }
+  const wanted = passthroughCandidates(service);
+  const signature = [...wanted.keys()].sort().join('|');
+  if (signature === passthrough.signature) return;
+  passthrough.busy = true;
+  try {
+    releasePassthrough();
+    passthrough.signature = signature;
+    for (const [id, binding] of wanted) {
+      try {
+        const described = service.describeBinding(binding);
+        const keys = Array.isArray(described.keys) ? described.keys : [];
+        const text = keys.filter((key) => key !== '+').join('+');
+        const dispose = service.registerFixed({
+          id,
+          label: () => (typeof passthrough.label === 'function' ? passthrough.label(text) : text),
+          keys,
+          bindings: [binding],
+        });
+        passthrough.disposers.push(dispose);
+      } catch {
+        // Rejecting one marker must never take down the shortcuts catalog.
+      }
+    }
+  } finally {
+    passthrough.busy = false;
+    if (passthrough.pending) {
+      passthrough.pending = false;
+      refreshPassthrough();
+    }
+  }
+}
+
+function beginTerminalPassthrough(label) {
+  const service = passthrough.service;
+  if (service === undefined) return () => {};
+  if (passthrough.holders === 0) {
+    const offCatalog = service.catalog.subscribe(() => { refreshPassthrough(); });
+    const offConfig = service.config.subscribe(() => { refreshPassthrough(); });
+    passthrough.unsubscribe = () => { offCatalog(); offConfig(); };
+  }
+  passthrough.holders += 1;
+  passthrough.label = label;
+  refreshPassthrough();
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    passthrough.holders = Math.max(0, passthrough.holders - 1);
+    if (passthrough.holders > 0) {
+      refreshPassthrough();
+      return;
+    }
+    if (passthrough.unsubscribe !== null) {
+      passthrough.unsubscribe();
+      passthrough.unsubscribe = null;
+    }
+    releasePassthrough();
+  };
+}
+
+function setShortcutService(service) {
+  if (passthrough.service === service) return;
+  if (passthrough.unsubscribe !== null) {
+    passthrough.unsubscribe();
+    passthrough.unsubscribe = null;
+  }
+  releasePassthrough();
+  passthrough.service = service;
+}
+
 function Body(props) {
   ensureCss();
   const { sessionId, useTabInfo, readShellPath, useTheme, t } = props;
@@ -402,6 +548,7 @@ function Body(props) {
   const menuRef = useRef(null);
   const flashTimer = useRef(null);
   const liveRef = useRef(true);
+  const [termFocused, setTermFocused] = useState(false);
   const say = (key, vars) => (t === undefined ? key : t(key, vars));
   const showFlash = (text, error) => {
     if (!liveRef.current) return;
@@ -537,6 +684,13 @@ function Body(props) {
     term.open(el);
     termRef.current = term;
     fitRef.current = fit;
+    const textarea = term.textarea;
+    const onTermFocus = () => { setTermFocused(true); };
+    const onTermBlur = () => { setTermFocused(false); };
+    if (textarea !== null && textarea !== undefined) {
+      textarea.addEventListener('focus', onTermFocus);
+      textarea.addEventListener('blur', onTermBlur);
+    }
     try { fit.fit(); } catch { /* ignore */ }
     const mac = isMacPlatform();
     term.attachCustomKeyEventHandler((event) => {
@@ -676,11 +830,20 @@ function Body(props) {
       if (socket !== null) {
         try { socket.close(); } catch { /* ignore */ }
       }
+      if (textarea !== null && textarea !== undefined) {
+        textarea.removeEventListener('focus', onTermFocus);
+        textarea.removeEventListener('blur', onTermBlur);
+      }
       termRef.current = null;
       fitRef.current = null;
+      setTermFocused(false);
       term.dispose();
     };
   }, [terminalId]);
+  useEffect(() => {
+    if (termFocused !== true) return undefined;
+    return beginTerminalPassthrough((keys) => say('shortcut.terminalInput', { keys }));
+  }, [termFocused]);
   useEffect(() => {
     const term = termRef.current;
     const el = screenRef.current;
@@ -892,6 +1055,10 @@ function apply(ctx) {
       };
     },
   }), 'fast-term: shortcut');
+  ctx.effect(() => {
+    setShortcutService(ctx.shortcuts);
+    return () => { setShortcutService(undefined); };
+  }, 'fast-term: shortcut passthrough');
   ctx.effect(() => {
     if (typeof ctx.sidebarRight.registerCloseHandler !== 'function') return;
     return ctx.sidebarRight.registerCloseHandler('fastterm', (sessionId, tab) => {

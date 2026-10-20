@@ -1,6 +1,6 @@
 {
   "name": "dsh-fast-term",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "In-layout fast terminal for DeepSeek Harness: dedicated PTY websocket, no frame acknowledgement",
   "type": "module",
   "main": "lib/index.js",

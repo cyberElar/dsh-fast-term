@@ -44,6 +44,7 @@ dsh-fast-term 把 PTY 输出直接推到一条专用 WebSocket，不排队、不
 - 过滤 xterm 的 Device Attributes 应答，避免 PowerShell 把 `[?1;2c` 当输入回显
 - 外部输入开关：默认只读，只有终端界面本身可以输入；点终端右上角的「只读」胶囊才会允许其它进程（含 Agent）通过 WebSocket 写入，可另配命令白名单
 - 复制粘贴：选中后 `Ctrl+C` 或 `Ctrl+Shift+C` 复制（没有选中时 `Ctrl+C` 仍是 SIGINT），`Ctrl+V` 粘贴；`Ctrl+Shift+V` 走浏览器原生粘贴；右键菜单提供复制 / 粘贴 / 全选，复制成功会在底部提示字数
+- 桌面版快捷键让行：终端获得焦点时，所有「单个 Ctrl」组合的 DSH 快捷键会临时让给终端（tmux 的 `Ctrl+B` 前缀不再触发侧边栏开关），失焦后立即恢复；不写入用户快捷键配置
 
 ## 安装
 
@@ -80,6 +81,7 @@ dsh plugin --profile desktop add "file:D:/Projects/dsh-fast-term"
 3. 直接输入命令即可；双击标签标题可以重命名；关闭标签 = 结束该 PTY
 4. 终端右上角的胶囊显示当前输入权限：`只读` 表示只有这个界面能输入；点一下变成 `可输入`，其它程序或 Agent 才能通过 WebSocket 向该 PTY 写入；再点一下恢复只读
 5. 鼠标选中文本后 `Ctrl+C`（或 `Ctrl+Shift+C`）复制、`Ctrl+V` 粘贴；也可以右键打开菜单（复制 / 粘贴 / 全选）。没有选中时 `Ctrl+C` 照常发送 SIGINT
+6. 桌面版 Windows/macOS：鼠标点进终端获得焦点后，`Ctrl+B` 这类单 Ctrl 快捷键会直接发给终端（tmux 前缀可用）；点回页面其它位置即恢复 DSH 的快捷键
 
 Windows 下进程的环境变量在启动那一刻就固定了，宿主连续跑很久时终端会一直用旧的 `PATH`（新装的 CLI 找不到）。本插件在创建 PTY 前会从注册表重读 `Path`（HKLM + HKCU，展开 `%VAR%`，5 秒缓存），所以改完 PATH 不用重启宿主，新开一个标签就能拿到；宿主运行时额外追加、且仍在磁盘上的目录也会保留。
 
@@ -138,6 +140,7 @@ curl "http://127.0.0.1:PORT/api/dsh-fast-term/screen?id=<id>&cols=120&rows=40"
 - 依赖 DSH 的 `sidebarRightTabs` 与 `sidebar.right.pane.tab` 槽位（在 0.2.1-rc.2 上验证）
 - 重命名保存在宿主进程内存里：DSH 宿主重启后会回到 shell 名
 - 复制 / 粘贴默认走 `navigator.clipboard`；若运行环境拒绝剪贴板权限，复制会提示失败（检查权限后重试），粘贴可用 `Ctrl+Shift+V` 的原生通道
+- 快捷键让行仅覆盖桌面版 Windows/macOS 且仅限「单个 Ctrl」的组合；终端聚焦期间这些 DSH 快捷键会临时失效（失焦即恢复），Web 版由 DSH 自身按焦点区域处理
 - 自带终端的「缺失 / 重连 / 只读」状态条还没有逐像素复刻，当前只用终端内的一行文字提示退出与错误
 - 替代自带终端依赖 `ui-sidebar-terminal` 这个 bundle id；DSH 升级改名时补丁会失效（终端本身仍可用）
 
@@ -152,7 +155,7 @@ dsh plugin --profile web add "file:D:/path/to/dsh-fast-term"
 
 - `src/host.js` → `lib/index.js`（宿主半）：`ctx.subprocess.spawnTerminal` 起 PTY，`webServer.registerUpgrade` 挂 `/api/dsh-fast-term/ws`，按 `sessionId/tabId` 维护常驻会话与回放缓冲；`GET /screen` 用打包进来的 `@xterm/headless` 重放画面
 - `src/client.js` → `lib/client.js`（浏览器半）：xterm.js + FitAddon，注册右侧栏标签与三个槽位；打包时用 `window.__ModuleLoader__.load` 包装，`react` 外置
-- 发布走 **staged**：`.github/workflows/publish.yml` 里是 `npm stage publish`（OIDC trusted publisher，只授权了提交、没授权直发），CI 跑完版本还在暂存区，要到 npmjs.com 的 Staged Packages 页（或 `npm stage approve <id>`）用 2FA 批准才真正上线；批准前 `npm i dsh-fast-term@<version>` 装不到
+- 发布走 **trusted publishing**：`.github/workflows/publish.yml` 在 GitHub Release 发布（或手动 dispatch）时用 OIDC 调 `npm publish`；版本已在 npm 上则跳过
 
 ## English
 
@@ -161,6 +164,8 @@ dsh plugin --profile web add "file:D:/path/to/dsh-fast-term"
 The UI mirrors the built-in terminal: the same guide card with a shell picker (the choice is remembered), tab titles showing the actual shell with double-click rename persisted on the host, colors and fonts taken from the DSH theme (light, dark, or system), and zh/en localization. It takes over `Ctrl + \`` and, with a one-entry profile patch disabling `ui-sidebar-terminal`, hides the built-in terminal's button and UI entirely.
 
 Text can be copied out of the terminal: select and press `Ctrl+C` or `Ctrl+Shift+C` (plain `Ctrl+C` without a selection still sends SIGINT), paste with `Ctrl+V`, or use the right-click menu for copy, paste and select-all. `Ctrl+Shift+V` keeps the browser's native paste path; a short toast reports how many characters were copied.
+
+On Desktop (Windows/macOS) the terminal temporarily takes over plain `Ctrl` shortcuts while it has focus, so a tmux prefix such as `Ctrl+B` reaches the PTY instead of toggling the sidebar; DSH bindings return as soon as focus leaves the terminal, and nothing is written to the user's keybinding preferences.
 
 Measured on Windows: cold prompt 0.12 s vs 3.1 s native, flood-echo 2.9 s vs 12.8 s native.
 

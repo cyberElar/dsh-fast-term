@@ -5,3 +5,4 @@ dist/
 .npm-cache/
 .DS_Store
 Thumbs.db
+_probe/
